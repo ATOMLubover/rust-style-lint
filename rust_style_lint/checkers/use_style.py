@@ -49,7 +49,6 @@ class UseStmt:
     scope_id: int
     public: bool
     in_tests_mod: bool
-    requires_super_glob: bool
     leaves: list[Leaf]
     diagnostics: list[tuple[int, str, str]]
 
@@ -252,7 +251,6 @@ def collect_uses(path: Path, source: bytes) -> list[UseStmt]:
                 scope_id=node.parent.id,
                 public=is_public_use(node, source),
                 in_tests_mod=lexical_tests_mod or test_file,
-                requires_super_glob=lexical_tests_mod,
                 leaves=leaves,
                 diagnostics=diagnostics,
             ),
@@ -696,47 +694,6 @@ def masked_source(source: bytes, statements: list[UseStmt]) -> bytes:
     return bytes(masked)
 
 
-def check_test_super_imports(
-    path: Path,
-    root: Path,
-    source: bytes,
-    statements: list[UseStmt],
-) -> list[Violation]:
-    scopes: dict[int, list[UseStmt]] = {}
-
-    for statement in statements:
-        if statement.requires_super_glob:
-            scopes.setdefault(statement.scope_id, []).append(statement)
-
-    violations: list[Violation] = []
-
-    for scope_statements in scopes.values():
-        super_statements = [
-            statement
-            for statement in scope_statements
-            if any(category(leaf, set()) == "super" for leaf in statement.leaves)
-        ]
-
-        if not super_statements:
-            violations.append(violation(path, root, source, scope_statements[0].start, "USE_SUPER_IN_TESTS_MISSING", "mod tests must contain exactly one `use super::*;`"))
-            continue
-
-        for statement in super_statements:
-            pure_glob = (
-                not statement.public
-                and len(statement.leaves) == 1
-                and statement.leaves[0] == Leaf(("super",), "*", "glob", None)
-            )
-
-            if not pure_glob:
-                violations.append(violation(path, root, source, statement.start, "USE_SUPER_IN_TESTS_NOT_GLOB", "super imports in mod tests must be `use super::*;`"))
-
-        for statement in super_statements[1:]:
-            violations.append(violation(path, root, source, statement.start, "USE_SUPER_IN_TESTS_TOO_MANY", "only one `use super::*;` is allowed in mod tests"))
-
-    return violations
-
-
 def check_single_test_module(
     path: Path,
     root: Path,
@@ -792,7 +749,6 @@ def check_file(
             if category(leaf, local_crates) == "super" and not statement.in_tests_mod:
                 violations.append(violation(path, root, source, statement.start, "USE_SUPER_OUTSIDE_TESTS", "`super` imports are only allowed inside mod tests"))
 
-    violations.extend(check_test_super_imports(path, root, source, statements))
     violations.extend(check_use_block_boundaries(path, root, source, statements))
     # Item order and test-module structure are analyzed on the raw source:
     # production_source() masks #[cfg(test)] mod declarations, which would
@@ -1014,20 +970,6 @@ def self_test() -> int:
         if diagnostics:
             print("self-test: fixed source still has diagnostics", file=sys.stderr)
             print("\n".join(str(violation) for violation in diagnostics), file=sys.stderr)
-            return 1
-
-        fixture.write_text("mod tests {\n    use super::*;\n}\n")
-        diagnostics, _ = check_file(fixture, root, {root.name}, default_traits)
-
-        if diagnostics:
-            print("self-test: valid test-module super import was rejected", file=sys.stderr)
-            return 1
-
-        fixture.write_text("mod tests {\n    use super::helper;\n}\n")
-        diagnostics, _ = check_file(fixture, root, {root.name}, default_traits)
-
-        if not any(violation.code == "USE_SUPER_IN_TESTS_NOT_GLOB" for violation in diagnostics):
-            print("self-test: invalid test-module super import was accepted", file=sys.stderr)
             return 1
 
         fixture.write_text(
