@@ -166,7 +166,7 @@ class RustSpacingChecker:
             first=first,
         )
 
-        # Multi-statement / multi-arm blocks and multi-field structs:
+        # Blocks whose content needs visual separation:
         #
         # if condition {
         #     //
@@ -175,9 +175,16 @@ class RustSpacingChecker:
         #     statement_2;
         # }
         #
-        # A `{` alone on its line and single-statement blocks are exempt.
+        # The separator exists because multi-line content is hard to scan:
+        # it is required for every multi-unit block AND for a single unit
+        # that itself spans several lines (e.g. a long `match` statement).
+        # A `{` alone on its line is exempt; a compact single-line unit is
+        # exempt.
+        first_unit_span_lines = units[0].start_point.row < units[0].end_point.row
+        needs_separator = len(units) >= 2 or first_unit_span_lines
+
         if (
-            len(units) >= 2
+            needs_separator
             and container.type
             in (
                 BLOCK_CONTAINERS
@@ -190,7 +197,11 @@ class RustSpacingChecker:
             description = (
                 "multi-field struct"
                 if container.type == "field_declaration_list"
-                else f"multi-{kind} block"
+                else (
+                    f"multi-{kind} block"
+                    if len(units) >= 2
+                    else f"multi-line {kind} block"
+                )
             )
 
             diagnostics.append(
@@ -220,8 +231,8 @@ class RustSpacingChecker:
                 if edit is not None:
                     edits.append(edit)
 
-        # Remove separators that became redundant after the
-        # single-statement block exemption was introduced:
+        # Remove separators from compact blocks: a single unit that fits on
+        # one line needs no bare `//` before it.
         #
         # if condition {
         #     //
@@ -229,6 +240,7 @@ class RustSpacingChecker:
         # }
         if (
             len(units) == 1
+            and not first_unit_span_lines
             and container.type
             in (
                 BLOCK_CONTAINERS
@@ -782,6 +794,7 @@ def check(root: Path, config: dict | None = None) -> list[Violation]:
     """Return spacing violations across every `.rs` file under root."""
     section = merged("spacing-style", config)
     ignore_dirs = set(section.get("ignore_dirs", []))
+    root = root.resolve()
     checker = RustSpacingChecker(root)
     diagnostics: list[Violation] = []
 
@@ -819,6 +832,7 @@ def fix(root: Path, config: dict | None = None) -> list[Violation]:
     """Apply BLK000, BLK001, and BLK002 fixes, then return remaining violations."""
     section = merged("spacing-style", config)
     ignore_dirs = set(section.get("ignore_dirs", []))
+    root = root.resolve()
     checker = RustSpacingChecker(root)
     files = iter_rs_files([root], ignore_dirs)
     changed_files = 0
