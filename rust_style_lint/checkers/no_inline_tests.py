@@ -12,7 +12,6 @@ import tree_sitter
 import tree_sitter_rust
 
 from ..base import Violation
-from ..production_source import production_source
 
 
 PARSER = tree_sitter.Parser(tree_sitter.Language(tree_sitter_rust.language()))
@@ -185,7 +184,10 @@ def is_inline_test_mod(node: tree_sitter.Node, source: bytes) -> bool:
 
 
 def check_file(path: Path, root: Path) -> list[Violation]:
-    source = production_source(path, root)
+    # Parse the raw source: masking cfg(test)-only modules through
+    # production_source would blank out exactly the inline test modules
+    # this checker must find.
+    source = path.read_bytes()
     tree = PARSER.parse(source)
     violations: list[Violation] = []
 
@@ -244,13 +246,19 @@ def self_test() -> int:
 
         violations = check(root)
 
-        if violations:
-            print("self-test: inline test module was not skipped", file=sys.stderr)
-            print(f"got {len(violations)} violations", file=sys.stderr)
+        if len(violations) != 1:
+            print(
+                f"self-test: inline test module was not flagged; got {len(violations)} violations",
+                file=sys.stderr,
+            )
 
             for violation in violations:
                 print(f"  {violation}", file=sys.stderr)
 
+            return 1
+
+        if "things.rs" not in str(violations[0].path):
+            print(f"self-test: wrong file flagged: {violations[0].path}", file=sys.stderr)
             return 1
 
         (source_dir / "things.rs").write_text(
@@ -278,10 +286,18 @@ def self_test() -> int:
 
         violations = check(root)
 
-        if violations:
-            print("self-test: commented inline test module was not skipped", file=sys.stderr)
+        if len(violations) != 1:
+            print(
+                f"self-test: commented inline test module was not flagged; got {len(violations)}",
+                file=sys.stderr,
+            )
             return 1
 
+        (source_dir / "things.rs").write_text(
+            "pub fn do_thing() {}\n"
+            "#[cfg(test)]\n"
+            "mod tests;\n",
+        )
         (source_dir / "lib.rs").write_text(
             "pub mod things;\n"
             "#[cfg(test)]\n"
@@ -294,8 +310,11 @@ def self_test() -> int:
 
         violations = check(root)
 
-        if violations:
-            print("self-test: inline test mod in lib.rs was not skipped", file=sys.stderr)
+        if len(violations) != 1:
+            print(
+                f"self-test: inline test mod in lib.rs was not flagged; got {len(violations)}",
+                file=sys.stderr,
+            )
             return 1
 
     return 0
