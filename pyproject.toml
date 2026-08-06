@@ -1,0 +1,16 @@
+[project]
+name = "rust-style-lint"
+version = "0.1.0"
+description = "Tree-sitter based Rust style checkers, selected and configured per project via rust-style-lint.toml"
+requires-python = ">=3.11"
+dependencies = [
+    "tree-sitter==0.25.0",
+    "tree-sitter-rust==0.23.3",
+]
+
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["rust_style_lint", "rust_style_lint.checkers"]
