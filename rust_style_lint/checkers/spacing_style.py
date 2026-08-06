@@ -166,6 +166,11 @@ class RustSpacingChecker:
             brace=brace,
             first=first,
         )
+        comment_rows = comment_rows_before_first(
+            lines=lines,
+            brace=brace,
+            first=first,
+        )
 
         # Blocks whose content needs visual separation:
         #
@@ -180,8 +185,10 @@ class RustSpacingChecker:
         # it is required for every multi-unit block AND for a single unit
         # that itself spans several lines (e.g. a long `match` statement).
         # A `{` alone on its line is exempt; a compact single-line unit is
-        # exempt. Struct declarations and struct literals never use the
-        # separator — their field lists are self-delimiting.
+        # exempt. A real comment before the first unit also separates
+        # visually, so it satisfies the rule. Struct declarations and
+        # struct literals never use the separator — their field lists are
+        # self-delimiting.
         first_unit_span_lines = units[0].start_point.row < units[0].end_point.row
         needs_separator = len(units) >= 2 or first_unit_span_lines
 
@@ -190,6 +197,7 @@ class RustSpacingChecker:
             and container.type in BLOCK_CONTAINERS
             and not line_is_only_open_brace(lines, brace)
             and not separator_rows
+            and not comment_rows
         ):
             kind = unit_kind(container)
             description = (
@@ -503,6 +511,27 @@ def separator_rows_before_first(
         row
         for row in range(start_row, end_row)
         if BARE_SEPARATOR_RE.fullmatch(lines[row]) is not None
+    ]
+
+
+def comment_rows_before_first(
+    *,
+    lines: list[str],
+    brace: Node,
+    first: Node,
+) -> list[int]:
+    """Rows holding a real comment (not a bare `//` separator) between the
+    opening brace and the first unit."""
+    start_row = brace.start_point.row + 1
+    end_row = min(first.start_point.row, len(lines))
+
+    return [
+        row
+        for row in range(start_row, end_row)
+        if (
+            BARE_SEPARATOR_RE.fullmatch(lines[row]) is None
+            and lines[row].lstrip().startswith("//")
+        )
     ]
 
 

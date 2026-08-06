@@ -249,7 +249,11 @@ def has_comment(
             if is_doc_comment:
                 return prefix == b"///"
 
-            return prefix[:2] == b"//" and prefix != b"///"
+            # A bare `//` (empty content) is a block separator, not a
+            # comment, and does not satisfy the coverage rule.
+            content = source[sibling.start_byte + 2 : sibling.end_byte].strip()
+
+            return prefix[:2] == b"//" and prefix != b"///" and bool(content)
 
         if sibling.type == "block_comment":
             prefix = source[sibling.start_byte : sibling.start_byte + 3]
@@ -257,7 +261,14 @@ def has_comment(
             if is_doc_comment:
                 return prefix == b"/**"
 
-            return prefix[:2] == b"/*" and prefix != b"/**" and prefix != b"/*!"
+            content = source[sibling.start_byte + 2 : sibling.end_byte - 2].strip()
+
+            return (
+                prefix[:2] == b"/*"
+                and prefix != b"/**"
+                and prefix != b"/*!"
+                and bool(content)
+            )
 
         return False
 
