@@ -42,6 +42,15 @@ use-style = true
 exclude_files = ["src/generated/schema.rs"]
 ```
 
+### Configuration semantics
+
+Rule tables are data, not code. The package ships `defaults.toml` with every
+default table (forbidden words, known traits, exclusions, ignore directories).
+A project section **replaces the packaged defaults for that checker as a
+whole** — a `[forbidden-identifiers]` section therefore declares the complete
+word table, not a delta. Sections that are absent fall back to the packaged
+defaults. There is no rule content in the checker code itself.
+
 Run from anywhere:
 
 ```sh

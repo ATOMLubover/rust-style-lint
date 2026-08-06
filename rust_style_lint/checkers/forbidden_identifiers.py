@@ -37,6 +37,7 @@ import tree_sitter
 import tree_sitter_rust
 
 from ..base import Violation
+from ..config import merged
 from ..production_source import production_source
 
 
@@ -61,24 +62,6 @@ DECLARATION_KINDS: tuple[str, ...] = (
 )
 
 # ---------------------------------------------------------------------------
-# forbidden word segments
-# ---------------------------------------------------------------------------
-
-FORBIDDEN_SEGMENTS: dict[str, tuple[str, str]] = {
-    "result":     ("FBD001", "'result' is forbidden — name what the value represents"),
-    "res":        ("FBD002", "'res' is a forbidden abbreviation of 'result'"),
-    "error":      ("FBD003", "'error' is forbidden — use 'err' instead"),
-    "closure":    ("FBD005", "'closure' is a forbidden word"),
-    "connection": ("FBD006", "'connection' is forbidden — use 'conn'"),
-    "txn":        ("FBD007", "'txn' is a forbidden abbreviation of 'transaction'"),
-    "tx":         ("FBD008", "'tx' is a forbidden abbreviation of 'transaction'"),
-    "extension":  ("FBD010", "'extension' is forbidden — use 'ext' instead"),
-    "previous":   ("FBD011", "'previous' is forbidden — use 'prev' instead"),
-}
-
-DEFAULT_EXCLUDE_FILENAMES = ("schema.rs",)
-
-# ---------------------------------------------------------------------------
 # helpers
 # ---------------------------------------------------------------------------
 
@@ -86,8 +69,8 @@ def text(source: bytes, node: tree_sitter.Node) -> str:
     return source[node.start_byte : node.end_byte].decode()
 
 
-def rust_files(root: Path, config: dict | None) -> list[Path]:
-    exclude_filenames = (config or {}).get("exclude_filenames", DEFAULT_EXCLUDE_FILENAMES)
+def rust_files(root: Path, config: dict) -> list[Path]:
+    exclude_filenames = set(config.get("exclude_filenames", []))
 
     return sorted(
         path
@@ -732,9 +715,9 @@ def _collect_pattern_identifiers(
         return
 
 
-def is_skipped_module_path(path: Path, root: Path, config: dict | None) -> bool:
+def is_skipped_module_path(path: Path, root: Path, config: dict) -> bool:
     """Return True for files under an exempted path segment."""
-    skip_paths = (config or {}).get("skip_module_paths", [])
+    skip_paths = config.get("skip_module_paths", [])
 
     if not skip_paths:
         return False
@@ -753,7 +736,7 @@ def check_file(
     root: Path,
     test_module_set: set[Path],
     forbidden_segments: dict[str, tuple[str, str]],
-    config: dict | None,
+    config: dict,
 ) -> list[Violation]:
     source = production_source(path, root)
     violations: list[Violation] = []
@@ -788,15 +771,11 @@ def check_file(
     return violations
 
 
-def configured_segments(config: dict | None) -> dict[str, tuple[str, str]]:
-    segments = dict(FORBIDDEN_SEGMENTS)
-
-    if config is None:
-        return segments
+def configured_segments(config: dict) -> dict[str, tuple[str, str]]:
+    segments: dict[str, tuple[str, str]] = {}
 
     for entry in config.get("words", []):
-        word = str(entry["word"])
-        segments[word] = (str(entry["code"]), str(entry["message"]))
+        segments[str(entry["word"])] = (str(entry["code"]), str(entry["message"]))
 
     return segments
 
@@ -804,24 +783,25 @@ def configured_segments(config: dict | None) -> dict[str, tuple[str, str]]:
 def check(root: Path, config: dict | None = None) -> list[Violation]:
     """Return forbidden-identifier violations under src/."""
     root = root.resolve()
-    ignored_files = resolve_ignore_files(root, [], [])
+    section = merged("forbidden-identifiers", config)
+    ignored_files: set[Path] = set()
+    configured_ignores = section.get("ignore_files", [])
+
+    if configured_ignores:
+        ignored_files = resolve_ignore_files(root, [Path(item) for item in configured_ignores], [])
+
     files = [
         path
-        for path in rust_files(root, config)
+        for path in rust_files(root, section)
         if path.resolve() not in ignored_files
     ]
     test_module_set = _build_test_module_set(root, files)
-    forbidden_segments = configured_segments(config)
-    configured_ignores = (config or {}).get("ignore_files", [])
-
-    if configured_ignores:
-        ignored_files.update(resolve_ignore_files(root, [Path(item) for item in configured_ignores], []))
+    forbidden_segments = configured_segments(section)
 
     return [
         violation
         for path in files
-        if path.resolve() not in ignored_files
-        for violation in check_file(path, root, test_module_set, forbidden_segments, config)
+        for violation in check_file(path, root, test_module_set, forbidden_segments, section)
     ]
 
 
@@ -1258,18 +1238,19 @@ def main() -> int:
         return self_test()
 
     root = args.root.resolve()
+    section = merged("forbidden-identifiers", None)
     ignored_files = resolve_ignore_files(root, args.ignore_files, args.ignore_lists)
     files = [
         path
-        for path in rust_files(root, None)
+        for path in rust_files(root, section)
         if path.resolve() not in ignored_files
     ]
     test_module_set = _build_test_module_set(root, files)
-    forbidden_segments = configured_segments(None)
+    forbidden_segments = configured_segments(section)
     violations = [
         violation
         for path in files
-        for violation in check_file(path, root, test_module_set, forbidden_segments, None)
+        for violation in check_file(path, root, test_module_set, forbidden_segments, section)
     ]
 
     for violation in violations:

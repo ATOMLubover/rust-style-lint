@@ -12,6 +12,7 @@ import tree_sitter
 import tree_sitter_rust
 
 from ..base import Violation
+from ..config import merged
 
 
 PARSER = tree_sitter.Parser(tree_sitter.Language(tree_sitter_rust.language()))
@@ -201,15 +202,15 @@ def module_path(base: tuple[str, ...], node: tree_sitter.Node, source: bytes) ->
     return base + tuple(reversed(inline_modules))
 
 
-def excluded_path(path: Path, root: Path, config: dict | None) -> bool:
-    exclude_files = (config or {}).get("exclude_files", [])
+def excluded_path(path: Path, root: Path, config: dict) -> bool:
+    exclude_files = config.get("exclude_files", [])
 
     return path.relative_to(root) in {Path(pattern) for pattern in exclude_files}
 
 
 def discover_production_files(
     root: Path,
-    config: dict | None,
+    config: dict,
 ) -> tuple[list[Path], set[tuple[str, ...]]]:
     src_dir = root / "src"
     paths = sorted(src_dir.rglob("*.rs")) if src_dir.is_dir() else []
@@ -315,8 +316,8 @@ def violation_for(path: Path, root: Path, node: tree_sitter.Node, code: str, mes
     )
 
 
-def configured_allowlist(config: dict | None) -> tuple[tuple[str, ...], ...]:
-    raw = (config or {}).get("allow_public_fields", [])
+def configured_allowlist(config: dict) -> tuple[tuple[str, ...], ...]:
+    raw = config.get("allow_public_fields", [])
 
     return tuple(tuple(str(module).split("::")) for module in raw)
 
@@ -384,9 +385,10 @@ def check_file(
 def check(root: Path, config: dict | None = None) -> list[Violation]:
     """Return restricted-visibility and public-field violations in src/."""
     root = root.resolve()
-    allowlist = configured_allowlist(config)
+    section = merged("visibility-style", config)
+    allowlist = configured_allowlist(section)
     rule = public_field_rule(allowlist)
-    paths, prefixes = discover_production_files(root, config)
+    paths, prefixes = discover_production_files(root, section)
 
     return [
         item

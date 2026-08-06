@@ -13,18 +13,9 @@ from tree_sitter import Language, Node, Parser
 import tree_sitter_rust
 
 from ..base import Violation
+from ..config import merged
 from ..production_source import production_source
 
-
-IGNORED_DIRS = {
-    ".git",
-    ".hg",
-    ".svn",
-    ".idea",
-    ".vscode",
-    "target",
-    "node_modules",
-}
 
 COMMENT_NODE_TYPES = {
     "line_comment",
@@ -764,6 +755,7 @@ def apply_edits(
 
 def iter_rs_files(
     paths: list[Path],
+    ignore_dirs: set[str],
 ) -> list[Path]:
     files: list[Path] = []
 
@@ -778,7 +770,7 @@ def iter_rs_files(
             continue
 
         for child in path.rglob("*.rs"):
-            if any(part in IGNORED_DIRS for part in child.parts):
+            if any(part in ignore_dirs for part in child.parts):
                 continue
 
             files.append(child)
@@ -788,10 +780,12 @@ def iter_rs_files(
 
 def check(root: Path, config: dict | None = None) -> list[Violation]:
     """Return spacing violations across every `.rs` file under root."""
+    section = merged("spacing-style", config)
+    ignore_dirs = set(section.get("ignore_dirs", []))
     checker = RustSpacingChecker(root)
     diagnostics: list[Violation] = []
 
-    for path in iter_rs_files([root]):
+    for path in iter_rs_files([root], ignore_dirs):
         try:
             analysis = checker.analyze_file(path)
             diagnostics.extend(analysis.diagnostics)
@@ -823,8 +817,10 @@ def check(root: Path, config: dict | None = None) -> list[Violation]:
 
 def fix(root: Path, config: dict | None = None) -> list[Violation]:
     """Apply BLK000, BLK001, and BLK002 fixes, then return remaining violations."""
+    section = merged("spacing-style", config)
+    ignore_dirs = set(section.get("ignore_dirs", []))
     checker = RustSpacingChecker(root)
-    files = iter_rs_files([root])
+    files = iter_rs_files([root], ignore_dirs)
     changed_files = 0
     applied_edits = 0
     skipped_parse_error_files = 0
@@ -933,8 +929,10 @@ def main() -> int:
 
     args = parser.parse_args()
 
+    section = merged("spacing-style", None)
+    ignore_dirs = set(section.get("ignore_dirs", []))
     checker = RustSpacingChecker(Path.cwd().resolve())
-    files = iter_rs_files(args.paths)
+    files = iter_rs_files(args.paths, ignore_dirs)
 
     if not args.fix:
         diagnostics: list[Violation] = []

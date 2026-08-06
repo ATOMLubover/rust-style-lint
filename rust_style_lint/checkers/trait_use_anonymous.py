@@ -13,30 +13,11 @@ import tree_sitter
 import tree_sitter_rust
 
 from ..base import Violation
+from ..config import merged
 from ..production_source import production_source
 
 
 PARSER = tree_sitter.Parser(tree_sitter.Language(tree_sitter_rust.language()))
-
-# These dependency sources are not part of every checkout, but these are the
-# external trait paths already governed by the project's Rust import style.
-KNOWN_EXTERNAL_TRAITS = {
-    "anyhow::Context",
-    "futures::FutureExt",
-    "futures::StreamExt",
-    "itertools::Itertools",
-    "serde::Deserialize",
-    "serde::Serialize",
-    "std::convert::TryFrom",
-    "std::convert::TryInto",
-    "std::io::BufRead",
-    "std::io::Read",
-    "std::io::Write",
-    "std::iter::Iterator",
-    "tokio_stream::StreamExt",
-    "tracing::Instrument",
-}
-MACRO_EXPANSION_TRAITS: set[str] = set()
 
 
 @dataclass(frozen=True)
@@ -268,15 +249,10 @@ def check_file(
     return violations
 
 
-def configured_traits(config: dict | None) -> tuple[set[str], set[str], list[str]]:
-    known = set(KNOWN_EXTERNAL_TRAITS)
-    macro_traits = set(MACRO_EXPANSION_TRAITS)
-    markers: list[str] = []
-
-    if config is not None:
-        known.update(str(trait) for trait in config.get("external_traits", []))
-        macro_traits.update(str(trait) for trait in config.get("macro_traits", []))
-        markers = [str(marker) for marker in config.get("macro_markers", [])]
+def configured_traits(config: dict) -> tuple[set[str], set[str], list[str]]:
+    known = {str(trait) for trait in config.get("external_traits", [])}
+    macro_traits = {str(trait) for trait in config.get("macro_traits", [])}
+    markers = [str(marker) for marker in config.get("macro_markers", [])]
 
     return known, macro_traits, markers
 
@@ -284,8 +260,9 @@ def configured_traits(config: dict | None) -> tuple[set[str], set[str], list[str
 def check(root: Path, config: dict | None = None) -> list[Violation]:
     """Return method-resolution-only trait imports under the project root."""
     root = root.resolve()
+    section = merged("trait-use-anonymous", config)
     names = trait_names(root)
-    known_traits, macro_traits, macro_markers = configured_traits(config)
+    known_traits, macro_traits, macro_markers = configured_traits(section)
 
     return [
         violation
@@ -357,7 +334,7 @@ def main() -> int:
     if args.self_test:
         return self_test()
 
-    violations = check(args.root.resolve())
+    violations = check(args.root.resolve(), None)
 
     for violation in violations:
         print(f"{violation.path}:{violation.line}: {violation.code}: {violation.message}", file=sys.stderr)

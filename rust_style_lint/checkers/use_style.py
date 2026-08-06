@@ -14,27 +14,12 @@ import tree_sitter
 import tree_sitter_rust
 
 from ..base import Violation
+from ..config import merged
 from ..production_source import production_source
 
 
 PARSER = tree_sitter.Parser(tree_sitter.Language(tree_sitter_rust.language()))
 CATEGORIES = ("super", "std", "third_party", "local_crate", "crate")
-KNOWN_TRAITS = {
-    "anyhow::Context",
-    "futures::FutureExt",
-    "futures::StreamExt",
-    "itertools::Itertools",
-    "serde::Deserialize",
-    "serde::Serialize",
-    "std::convert::TryFrom",
-    "std::convert::TryInto",
-    "std::io::BufRead",
-    "std::io::Read",
-    "std::io::Write",
-    "std::iter::Iterator",
-    "tokio_stream::StreamExt",
-    "tracing::Instrument",
-}
 
 
 @dataclass(frozen=True)
@@ -774,7 +759,7 @@ def check_file(
     path: Path,
     root: Path,
     local_crates: set[str],
-    known_traits: set[str] = KNOWN_TRAITS,
+    known_traits: set[str],
 ) -> tuple[list[Violation], list[tuple[int, int, bytes]]]:
     source = production_source(path, root)
     statements = collect_uses(path, source)
@@ -912,7 +897,7 @@ def apply_structure_fixes(path: Path, local_crates: set[str]) -> None:
     raise RuntimeError(f"structure fixer did not converge for {path}")
 
 
-def fix_file(path: Path, root: Path, local_crates: set[str], known_traits: set[str] = KNOWN_TRAITS) -> list[Violation]:
+def fix_file(path: Path, root: Path, local_crates: set[str], known_traits: set[str]) -> list[Violation]:
     for _ in range(100):
         before = path.read_bytes()
         _, edits = check_file(path, root, local_crates, known_traits)
@@ -926,18 +911,16 @@ def fix_file(path: Path, root: Path, local_crates: set[str], known_traits: set[s
     raise RuntimeError(f"use-style fixer did not converge for {path}")
 
 
-def configured_traits(config: dict | None) -> set[str]:
-    if config is None:
-        return KNOWN_TRAITS
-
-    return KNOWN_TRAITS | {str(trait) for trait in config.get("traits", [])}
+def configured_traits(config: dict) -> set[str]:
+    return {str(trait) for trait in config.get("traits", [])}
 
 
 def check(root: Path, config: dict | None = None) -> list[Violation]:
     """Return use-style violations under src/."""
     root = root.resolve()
+    section = merged("use-style", config)
     local_crates = workspace_crates(root)
-    known_traits = configured_traits(config)
+    known_traits = configured_traits(section)
     diagnostics: list[Violation] = []
 
     for path in rust_files(root, []):
@@ -950,8 +933,9 @@ def check(root: Path, config: dict | None = None) -> list[Violation]:
 def fix(root: Path, config: dict | None = None) -> list[Violation]:
     """Rewrite use declarations, then format them with cargo fmt."""
     root = root.resolve()
+    section = merged("use-style", config)
     local_crates = workspace_crates(root)
-    known_traits = configured_traits(config)
+    known_traits = configured_traits(section)
 
     for path in rust_files(root, []):
         fix_file(path, root, local_crates, known_traits)
@@ -962,6 +946,8 @@ def fix(root: Path, config: dict | None = None) -> list[Violation]:
 
 
 def self_test() -> int:
+    default_traits = configured_traits(merged("use-style", None))
+
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
         fixture = root / "src" / "lib.rs"
@@ -977,7 +963,7 @@ def self_test() -> int:
             "pub use crate::reexport::Thing;\n\n"
             "fn local() { use std::mem::take; }\n",
         )
-        diagnostics, _ = check_file(fixture, root, {root.name})
+        diagnostics, _ = check_file(fixture, root, {root.name}, default_traits)
 
         if any(violation.code in {"USE_GROUP_ORDER", "USE_MISSING_MERGE"} for violation in diagnostics):
             print("self-test: cfg conditions were merged into one import group", file=sys.stderr)
@@ -995,7 +981,7 @@ def self_test() -> int:
             "#[cfg(not(feature = \"a\"))]\n"
             "use crate::{b::B, a::A};\n",
         )
-        _, edits = check_file(fixture, root, {root.name})
+        _, edits = check_file(fixture, root, {root.name}, default_traits)
         apply_fixes(fixture, edits)
         fixed = fixture.read_text()
 
@@ -1003,7 +989,7 @@ def self_test() -> int:
             print("self-test: cfg-safe use fix was not applied", file=sys.stderr)
             return 1
 
-        diagnostics, _ = check_file(fixture, root, {root.name})
+        diagnostics, _ = check_file(fixture, root, {root.name}, default_traits)
 
         if diagnostics:
             print("self-test: fixed source still has diagnostics", file=sys.stderr)
@@ -1011,14 +997,14 @@ def self_test() -> int:
             return 1
 
         fixture.write_text("mod tests {\n    use super::*;\n}\n")
-        diagnostics, _ = check_file(fixture, root, {root.name})
+        diagnostics, _ = check_file(fixture, root, {root.name}, default_traits)
 
         if diagnostics:
             print("self-test: valid test-module super import was rejected", file=sys.stderr)
             return 1
 
         fixture.write_text("mod tests {\n    use super::helper;\n}\n")
-        diagnostics, _ = check_file(fixture, root, {root.name})
+        diagnostics, _ = check_file(fixture, root, {root.name}, default_traits)
 
         if not any(violation.code == "USE_SUPER_IN_TESTS_NOT_GLOB" for violation in diagnostics):
             print("self-test: invalid test-module super import was accepted", file=sys.stderr)
@@ -1034,7 +1020,7 @@ def self_test() -> int:
             "    use super::*;\n"
             "}\n",
         )
-        diagnostics, edits = check_file(fixture, root, {root.name})
+        diagnostics, edits = check_file(fixture, root, {root.name}, default_traits)
 
         if not any(violation.code == "USE_ITEM_ORDER" for violation in diagnostics):
             print("self-test: invalid item order was accepted", file=sys.stderr)
@@ -1052,7 +1038,7 @@ def self_test() -> int:
             print("self-test: trailing test module was not moved", file=sys.stderr)
             return 1
 
-        diagnostics, _ = check_file(fixture, root, {root.name})
+        diagnostics, _ = check_file(fixture, root, {root.name}, default_traits)
 
         if diagnostics:
             print("self-test: structure-fixed source still has diagnostics", file=sys.stderr)
@@ -1077,7 +1063,7 @@ def self_test() -> int:
             print("self-test: module comment was not moved with its declaration", file=sys.stderr)
             return 1
 
-        diagnostics, _ = check_file(fixture, root, {root.name})
+        diagnostics, _ = check_file(fixture, root, {root.name}, default_traits)
 
         if diagnostics:
             print("self-test: nested structure-fixed source still has diagnostics", file=sys.stderr)
@@ -1116,7 +1102,7 @@ def main() -> int:
         subprocess.run(["cargo", "fmt", "--all"], cwd=root, check=True)
 
     for path in paths:
-        errors, _ = check_file(path, root, local_crates)
+        errors, _ = check_file(path, root, local_crates, configured_traits(merged("use-style", None)))
         diagnostics.extend(errors)
 
     for violation in diagnostics:

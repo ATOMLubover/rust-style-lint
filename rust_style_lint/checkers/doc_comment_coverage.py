@@ -40,6 +40,7 @@ import tree_sitter
 import tree_sitter_rust
 
 from ..base import Violation
+from ..config import merged
 from ..production_source import production_source
 
 
@@ -62,17 +63,12 @@ ITEM_KINDS = (
     "union_item",
 )
 
-DEFAULT_EXCLUDE_SEGMENTS = ("tests", "entity")
-DEFAULT_EXCLUDE_FILENAME_PREFIXES = ("test_",)
-DEFAULT_EXCLUDE_FILENAMES = ("schema.rs", "entity.rs")
-
-
-def excluded_path(path: Path, config: dict | None) -> bool:
+def excluded_path(path: Path, config: dict) -> bool:
     """Return True for test fixtures and generated code."""
 
-    exclude_segments = (config or {}).get("exclude_segments", DEFAULT_EXCLUDE_SEGMENTS)
-    exclude_prefixes = (config or {}).get("exclude_filename_prefixes", DEFAULT_EXCLUDE_FILENAME_PREFIXES)
-    exclude_filenames = (config or {}).get("exclude_filenames", DEFAULT_EXCLUDE_FILENAMES)
+    exclude_segments = config.get("exclude_segments", [])
+    exclude_prefixes = config.get("exclude_filename_prefixes", [])
+    exclude_filenames = config.get("exclude_filenames", [])
 
     parts = path.parts
 
@@ -85,7 +81,7 @@ def excluded_path(path: Path, config: dict | None) -> bool:
     return path.name in exclude_filenames
 
 
-def rust_files(root: Path, config: dict | None) -> list[Path]:
+def rust_files(root: Path, config: dict) -> list[Path]:
     return sorted(
         path
         for path in (root / "src").rglob("*.rs")
@@ -311,9 +307,11 @@ def check_file(path: Path, root: Path) -> list[Violation]:
 
 def check(root: Path, config: dict | None = None) -> list[Violation]:
     """Return comment-coverage violations under src/."""
+    section = merged("doc-comment-coverage", config)
+
     return [
         violation
-        for path in rust_files(root, config)
+        for path in rust_files(root, section)
         for violation in check_file(path, root)
     ]
 
