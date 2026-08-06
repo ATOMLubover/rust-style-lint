@@ -497,14 +497,24 @@ def item_end(source: bytes, node: tree_sitter.Node) -> int:
     return len(source) if newline < 0 else newline + 1
 
 
+def is_test_mod_decl(node: tree_sitter.Node, source: bytes) -> bool:
+    """Return True for a `mod tests` declaration (separate-file or inline)."""
+    if node.type != "mod_item":
+        return False
+
+    name = node.child_by_field_name("name")
+
+    return name is not None and text(source, name) == "tests"
+
+
 def item_rank(node: tree_sitter.Node, source: bytes) -> int:
     if node.type == "use_declaration":
         return 1 if is_public_use(node, source) else 0
 
     if node.type == "mod_item":
-        return 2
+        return 3 if is_test_mod_decl(node, source) else 2
 
-    return 3
+    return 4
 
 
 def check_item_order(path: Path, root: Path, source: bytes) -> list[Violation]:
@@ -518,7 +528,7 @@ def check_item_order(path: Path, root: Path, source: bytes) -> list[Violation]:
             rank = item_rank(node, source)
 
             if rank < highest:
-                expected = "ordinary use, pub use, mod, then other code"
+                expected = "ordinary use, pub use, mod, mod tests, then other code"
                 violations.append(violation(path, root, source, node.start_byte, "USE_ITEM_ORDER", expected))
 
             highest = max(highest, rank)
@@ -617,12 +627,18 @@ def first_structure_edit(
             if node.type == "use_declaration" and is_public_use(node, source)
         ]
         modules = [node for node in declarations if node.type == "mod_item"]
+        test_modules = [node for node in modules if is_test_mod_decl(node, source)]
+        modules = [node for node in modules if not is_test_mod_decl(node, source)]
         sections = [
             join_use_chunks(source, ordinary_uses, statements, local_crates),
             join_use_chunks(source, public_uses, statements, local_crates),
             b"\n".join(
                 source[item_start(source, node):item_end(source, node)].strip(b"\r\n")
                 for node in modules
+            ),
+            b"\n".join(
+                source[item_start(source, node):item_end(source, node)].strip(b"\r\n")
+                for node in test_modules
             ),
         ]
         header = b"\n\n".join(section for section in sections if section) + b"\n\n"
@@ -761,6 +777,7 @@ def check_file(
     local_crates: set[str],
     known_traits: set[str],
 ) -> tuple[list[Violation], list[tuple[int, int, bytes]]]:
+    raw_source = path.read_bytes()
     source = production_source(path, root)
     statements = collect_uses(path, source)
     masked = masked_source(source, statements)
@@ -777,8 +794,11 @@ def check_file(
 
     violations.extend(check_test_super_imports(path, root, source, statements))
     violations.extend(check_use_block_boundaries(path, root, source, statements))
-    violations.extend(check_item_order(path, root, source))
-    violations.extend(check_single_test_module(path, root, source))
+    # Item order and test-module structure are analyzed on the raw source:
+    # production_source() masks #[cfg(test)] mod declarations, which would
+    # hide exactly the declarations these checks must order.
+    violations.extend(check_item_order(path, root, raw_source))
+    violations.extend(check_single_test_module(path, root, raw_source))
 
     for block in contiguous_blocks(source, statements):
         for segment in condition_segments(block):
@@ -1011,14 +1031,14 @@ def self_test() -> int:
             return 1
 
         fixture.write_text(
-            "mod before;\n"
-            "use std::time::Duration;\n"
-            "pub use crate::api::Api;\n"
-            "fn main_code() {}\n"
             "#[cfg(test)]\n"
             "mod tests {\n"
             "    use super::*;\n"
-            "}\n",
+            "}\n"
+            "mod before;\n"
+            "use std::time::Duration;\n"
+            "pub use crate::api::Api;\n"
+            "fn main_code() {}\n",
         )
         diagnostics, edits = check_file(fixture, root, {root.name}, default_traits)
 
@@ -1034,8 +1054,17 @@ def self_test() -> int:
             print("self-test: use/pub use/mod order was not fixed", file=sys.stderr)
             return 1
 
-        if fixed.index("mod tests") > fixed.index("fn main_code"):
-            print("self-test: trailing test module was not moved", file=sys.stderr)
+        # mod tests forms its own block after every ordinary mod declaration.
+        if not (
+            fixed.index("mod before") < fixed.index("mod tests") < fixed.index("fn main_code")
+        ):
+            print("self-test: mod tests was not placed after all mod declarations", file=sys.stderr)
+            print(fixed, file=sys.stderr)
+            return 1
+
+        if "\n\n#[cfg(test)]" not in fixed:
+            print("self-test: mod tests is not separated as its own block", file=sys.stderr)
+            print(fixed, file=sys.stderr)
             return 1
 
         diagnostics, _ = check_file(fixture, root, {root.name}, default_traits)
@@ -1090,19 +1119,21 @@ def main() -> int:
         return self_test()
 
     root = args.root.resolve()
+    section = merged("use-style", None)
     local_crates = workspace_crates(root)
+    known_traits = configured_traits(section)
     diagnostics: list[Violation] = []
 
     paths = rust_files(root, args.paths)
 
     if args.fix:
         for path in paths:
-            fix_file(path, root, local_crates)
+            fix_file(path, root, local_crates, known_traits)
 
         subprocess.run(["cargo", "fmt", "--all"], cwd=root, check=True)
 
     for path in paths:
-        errors, _ = check_file(path, root, local_crates, configured_traits(merged("use-style", None)))
+        errors, _ = check_file(path, root, local_crates, known_traits)
         diagnostics.extend(errors)
 
     for violation in diagnostics:
