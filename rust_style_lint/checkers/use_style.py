@@ -534,6 +534,85 @@ def check_item_order(path: Path, root: Path, source: bytes) -> list[Violation]:
     return violations
 
 
+def check_mod_grouping(
+    path: Path,
+    root: Path,
+    source: bytes,
+) -> tuple[list[Violation], list[tuple[int, int, bytes]]]:
+    """Mod declarations group like use blocks: ordinary mods are adjacent,
+    and the mod tests group follows after exactly one blank line."""
+    tree = PARSER.parse(source)
+    violations: list[Violation] = []
+    edits: list[tuple[int, int, bytes]] = []
+
+    for scope in scope_nodes(tree):
+        mods = [
+            node
+            for node in semantic_children(scope)
+            if node.type == "mod_item"
+        ]
+        test_mods = [node for node in mods if is_test_mod_decl(node, source)]
+        ordinary = [node for node in mods if not is_test_mod_decl(node, source)]
+
+        for previous, current in zip(ordinary, ordinary[1:]):
+            start = item_end(source, previous)
+            end = item_start(source, current)
+            gap = source[start:end]
+
+            if gap.count(b"\n") != 0:
+                violations.append(
+                    violation(
+                        path,
+                        root,
+                        source,
+                        current.start_byte,
+                        "USE_MOD_GROUP_BLANK_LINE",
+                        "mod declarations in the same group must be adjacent",
+                    ),
+                )
+                edits.append((start, end, b""))
+
+        for previous, current in zip(test_mods, test_mods[1:]):
+            start = item_end(source, previous)
+            end = item_start(source, current)
+            gap = source[start:end]
+
+            if gap.count(b"\n") != 0:
+                violations.append(
+                    violation(
+                        path,
+                        root,
+                        source,
+                        current.start_byte,
+                        "USE_MOD_GROUP_BLANK_LINE",
+                        "mod tests declarations must be adjacent",
+                    ),
+                )
+                edits.append((start, end, b""))
+
+        # The separator check only applies when the groups are already in
+        # order; a reversed layout is the structure fixer's job.
+        if ordinary and test_mods and ordinary[-1].start_byte < test_mods[0].start_byte:
+            start = item_end(source, ordinary[-1])
+            end = item_start(source, test_mods[0])
+            gap = source[start:end]
+
+            if gap.count(b"\n") != 1:
+                violations.append(
+                    violation(
+                        path,
+                        root,
+                        source,
+                        test_mods[0].start_byte,
+                        "USE_MOD_GROUP_BLANK_LINE",
+                        "mod tests must follow ordinary mod declarations after exactly one blank line",
+                    ),
+                )
+                edits.append((start, end, b"\n"))
+
+    return violations, edits
+
+
 def check_use_block_boundaries(
     path: Path,
     root: Path,
@@ -750,10 +829,13 @@ def check_file(
                 violations.append(violation(path, root, source, statement.start, "USE_SUPER_OUTSIDE_TESTS", "`super` imports are only allowed inside mod tests"))
 
     violations.extend(check_use_block_boundaries(path, root, source, statements))
-    # Item order and test-module structure are analyzed on the raw source:
-    # production_source() masks #[cfg(test)] mod declarations, which would
-    # hide exactly the declarations these checks must order.
+    # Item order, grouping, and test-module structure are analyzed on the raw
+    # source: production_source() masks #[cfg(test)] mod declarations, which
+    # would hide exactly the declarations these checks must order.
     violations.extend(check_item_order(path, root, raw_source))
+    mod_group_violations, mod_group_edits = check_mod_grouping(path, root, raw_source)
+    violations.extend(mod_group_violations)
+    edits.extend(mod_group_edits)
     violations.extend(check_single_test_module(path, root, raw_source))
 
     for block in contiguous_blocks(source, statements):
@@ -1038,6 +1120,37 @@ def self_test() -> int:
 
         if diagnostics:
             print("self-test: nested structure-fixed source still has diagnostics", file=sys.stderr)
+
+        fixture.write_text(
+            "/// First module.\n"
+            "mod first;\n"
+            "\n"
+            "/// Second module.\n"
+            "mod second;\n"
+            "\n"
+            "#[cfg(test)]\n"
+            "mod tests {\n"
+            "    use super::*;\n"
+            "}\n",
+        )
+        diagnostics, edits = check_file(fixture, root, {root.name}, default_traits)
+
+        if not any(violation.code == "USE_MOD_GROUP_BLANK_LINE" for violation in diagnostics):
+            print("self-test: blank line between sibling mod declarations was accepted", file=sys.stderr)
+            return 1
+
+        apply_fixes(fixture, edits)
+        fixed = fixture.read_text()
+
+        if "mod first;\n/// Second module." not in fixed:
+            print("self-test: sibling mod declarations were not made adjacent", file=sys.stderr)
+            print(fixed, file=sys.stderr)
+            return 1
+
+        diagnostics, _ = check_file(fixture, root, {root.name}, default_traits)
+
+        if diagnostics:
+            print("self-test: mod-group-fixed source still has diagnostics", file=sys.stderr)
             print("\n".join(str(violation) for violation in diagnostics), file=sys.stderr)
             return 1
 
