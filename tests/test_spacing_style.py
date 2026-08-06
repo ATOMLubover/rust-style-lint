@@ -105,8 +105,9 @@ class RustSpacingCheckerTest(unittest.TestCase):
 """,
         )
 
-    def test_multi_field_struct_requires_a_block_start_separator(self) -> None:
+    def test_struct_separator_is_forbidden_and_removed(self) -> None:
         source = """struct Payload {
+    //
     first: String,
     second: String,
 }
@@ -116,14 +117,42 @@ class RustSpacingCheckerTest(unittest.TestCase):
 
         self.assertEqual(
             [diagnostic.code for diagnostic in analysis.diagnostics],
-            ["BLK000"],
+            ["BLK002"],
         )
         self.assertEqual(
             fixed.decode(),
             """struct Payload {
-    //
     first: String,
     second: String,
+}
+""",
+        )
+
+    def test_struct_literal_separator_is_forbidden_and_removed(self) -> None:
+        source = """fn build() {
+    //
+    let payload = Payload {
+        //
+        first: String::new(),
+        second: String::new(),
+    };
+}
+"""
+        analysis = self.analyze(source, build_fixes=True)
+        fixed = apply_edits(source.encode(), analysis.edits)
+
+        self.assertEqual(
+            [diagnostic.code for diagnostic in analysis.diagnostics],
+            ["BLK002"],
+        )
+        self.assertEqual(
+            fixed.decode(),
+            """fn build() {
+    //
+    let payload = Payload {
+        first: String::new(),
+        second: String::new(),
+    };
 }
 """,
         )
@@ -131,6 +160,7 @@ class RustSpacingCheckerTest(unittest.TestCase):
     def test_nested_variant_struct_and_following_variant_do_not_overlap(self) -> None:
         source = """enum Payload {
     First {
+        //
         first: String,
         second: String,
     },
@@ -142,13 +172,12 @@ class RustSpacingCheckerTest(unittest.TestCase):
 
         self.assertEqual(
             [diagnostic.code for diagnostic in analysis.diagnostics],
-            ["BLK000", "BLK001"],
+            ["BLK002", "BLK001"],
         )
         self.assertEqual(
             fixed.decode(),
             """enum Payload {
     First {
-        //
         first: String,
         second: String,
     },

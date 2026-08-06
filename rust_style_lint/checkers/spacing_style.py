@@ -27,6 +27,7 @@ BLOCK_CONTAINERS = {
 }
 STRUCT_FIELD_CONTAINERS = {
     "field_declaration_list",
+    "field_initializer_list",
 }
 ENUM_VARIANT_CONTAINERS = {
     "enum_variant_list",
@@ -179,29 +180,22 @@ class RustSpacingChecker:
         # it is required for every multi-unit block AND for a single unit
         # that itself spans several lines (e.g. a long `match` statement).
         # A `{` alone on its line is exempt; a compact single-line unit is
-        # exempt.
+        # exempt. Struct declarations and struct literals never use the
+        # separator — their field lists are self-delimiting.
         first_unit_span_lines = units[0].start_point.row < units[0].end_point.row
         needs_separator = len(units) >= 2 or first_unit_span_lines
 
         if (
             needs_separator
-            and container.type
-            in (
-                BLOCK_CONTAINERS
-                | STRUCT_FIELD_CONTAINERS
-            )
+            and container.type in BLOCK_CONTAINERS
             and not line_is_only_open_brace(lines, brace)
             and not separator_rows
         ):
             kind = unit_kind(container)
             description = (
-                "multi-field struct"
-                if container.type == "field_declaration_list"
-                else (
-                    f"multi-{kind} block"
-                    if len(units) >= 2
-                    else f"multi-line {kind} block"
-                )
+                f"multi-{kind} block"
+                if len(units) >= 2
+                else f"multi-line {kind} block"
             )
 
             diagnostics.append(
@@ -231,6 +225,43 @@ class RustSpacingChecker:
                 if edit is not None:
                     edits.append(edit)
 
+        # Struct declarations and struct literals must not carry a bare `//`
+        # separator: their field lists are self-delimiting and any separator
+        # between `{` and the first field is noise.
+        #
+        # pub struct UserMessageBody {
+        #     //
+        #     pub content: String,
+        # }
+        if (
+            container.type in STRUCT_FIELD_CONTAINERS
+            and separator_rows
+        ):
+            diagnostics.append(
+                Violation(
+                    path=self._relative(path),
+                    line=separator_rows[0] + 1,
+                    column=1,
+                    code="BLK002",
+                    message=(
+                        "bare `//` separator is forbidden in struct "
+                        "declarations and struct literals; the field list "
+                        "needs no separator"
+                    ),
+                ),
+            )
+
+            if build_fixes:
+                edits.extend(
+                    build_redundant_separator_edits(
+                        lines=lines,
+                        line_starts=line_starts,
+                        brace=brace,
+                        first=first,
+                        separator_rows=separator_rows,
+                    )
+                )
+
         # Remove separators from compact blocks: a single unit that fits on
         # one line needs no bare `//` before it.
         #
@@ -241,11 +272,7 @@ class RustSpacingChecker:
         if (
             len(units) == 1
             and not first_unit_span_lines
-            and container.type
-            in (
-                BLOCK_CONTAINERS
-                | STRUCT_FIELD_CONTAINERS
-            )
+            and container.type in BLOCK_CONTAINERS
             and separator_rows
         ):
             diagnostics.append(
@@ -383,6 +410,13 @@ def direct_units(container: Node) -> list[Node]:
             child
             for child in container.named_children
             if child.type == "field_declaration"
+        ]
+
+    if container.type == "field_initializer_list":
+        return [
+            child
+            for child in container.named_children
+            if child.type == "field_initializer"
         ]
 
     if container.type == "enum_variant_list":
