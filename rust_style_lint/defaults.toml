@@ -1,0 +1,101 @@
+# Default rule tables for every checker. A project's rust-style-lint.toml
+# overrides a checker section as a whole: when the project defines
+# [checker-name], the section replaces the defaults below entirely.
+# There is no rule content in the checker code itself.
+
+[forbidden-identifiers]
+exclude_filenames = ["schema.rs"]
+
+[[forbidden-identifiers.words]]
+word = "result"
+code = "FBD001"
+message = "'result' is forbidden — name what the value represents"
+
+[[forbidden-identifiers.words]]
+word = "res"
+code = "FBD002"
+message = "'res' is a forbidden abbreviation of 'result'"
+
+[[forbidden-identifiers.words]]
+word = "error"
+code = "FBD003"
+message = "'error' is forbidden — use 'err' instead"
+
+[[forbidden-identifiers.words]]
+word = "closure"
+code = "FBD005"
+message = "'closure' is a forbidden word"
+
+[[forbidden-identifiers.words]]
+word = "connection"
+code = "FBD006"
+message = "'connection' is forbidden — use 'conn'"
+
+[[forbidden-identifiers.words]]
+word = "txn"
+code = "FBD007"
+message = "'txn' is a forbidden abbreviation of 'transaction'"
+
+[[forbidden-identifiers.words]]
+word = "tx"
+code = "FBD008"
+message = "'tx' is a forbidden abbreviation of 'transaction'"
+
+[[forbidden-identifiers.words]]
+word = "extension"
+code = "FBD010"
+message = "'extension' is forbidden — use 'ext' instead"
+
+[[forbidden-identifiers.words]]
+word = "previous"
+code = "FBD011"
+message = "'previous' is forbidden — use 'prev' instead"
+
+[use-style]
+traits = [
+    "anyhow::Context",
+    "futures::FutureExt",
+    "futures::StreamExt",
+    "itertools::Itertools",
+    "serde::Deserialize",
+    "serde::Serialize",
+    "std::convert::TryFrom",
+    "std::convert::TryInto",
+    "std::io::BufRead",
+    "std::io::Read",
+    "std::io::Write",
+    "std::iter::Iterator",
+    "tokio_stream::StreamExt",
+    "tracing::Instrument",
+]
+
+[trait-use-anonymous]
+external_traits = [
+    "anyhow::Context",
+    "futures::FutureExt",
+    "futures::StreamExt",
+    "itertools::Itertools",
+    "serde::Deserialize",
+    "serde::Serialize",
+    "std::convert::TryFrom",
+    "std::convert::TryInto",
+    "std::io::BufRead",
+    "std::io::Read",
+    "std::io::Write",
+    "std::iter::Iterator",
+    "tokio_stream::StreamExt",
+    "tracing::Instrument",
+]
+macro_traits = []
+macro_markers = []
+
+[doc-comment-coverage]
+exclude_segments = ["tests", "entity"]
+exclude_filename_prefixes = ["test_"]
+exclude_filenames = ["schema.rs", "entity.rs"]
+
+[visibility-style]
+allow_public_fields = []
+
+[spacing-style]
+ignore_dirs = [".git", ".hg", ".svn", ".idea", ".vscode", "target", "node_modules"]
