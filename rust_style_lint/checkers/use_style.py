@@ -505,14 +505,21 @@ def is_test_mod_decl(node: tree_sitter.Node, source: bytes) -> bool:
     return name is not None and text(source, name) == "tests"
 
 
+def is_public_mod(node: tree_sitter.Node, source: bytes) -> bool:
+    return node.type == "mod_item" and text(source, node).lstrip().startswith("pub mod ")
+
+
 def item_rank(node: tree_sitter.Node, source: bytes) -> int:
     if node.type == "use_declaration":
         return 1 if is_public_use(node, source) else 0
 
     if node.type == "mod_item":
-        return 3 if is_test_mod_decl(node, source) else 2
+        if is_test_mod_decl(node, source):
+            return 4
 
-    return 4
+        return 3 if is_public_mod(node, source) else 2
+
+    return 5
 
 
 def check_item_order(path: Path, root: Path, source: bytes) -> list[Violation]:
@@ -526,7 +533,7 @@ def check_item_order(path: Path, root: Path, source: bytes) -> list[Violation]:
             rank = item_rank(node, source)
 
             if rank < highest:
-                expected = "ordinary use, pub use, mod, mod tests, then other code"
+                expected = "ordinary use, pub use, private mod, pub mod, mod tests, then other code"
                 violations.append(violation(path, root, source, node.start_byte, "USE_ITEM_ORDER", expected))
 
             highest = max(highest, rank)
@@ -539,8 +546,9 @@ def check_mod_grouping(
     root: Path,
     source: bytes,
 ) -> tuple[list[Violation], list[tuple[int, int, bytes]]]:
-    """Mod declarations group like use blocks: ordinary mods are adjacent,
-    and the mod tests group follows after exactly one blank line."""
+    """Mod declarations group like use blocks: private mods, then pub mods,
+    then mod tests. Each block is adjacent internally and separated from
+    the next block by exactly one blank line."""
     tree = PARSER.parse(source)
     violations: list[Violation] = []
     edits: list[tuple[int, int, bytes]] = []
@@ -552,49 +560,47 @@ def check_mod_grouping(
             if node.type == "mod_item"
         ]
         test_mods = [node for node in mods if is_test_mod_decl(node, source)]
-        ordinary = [node for node in mods if not is_test_mod_decl(node, source)]
+        public_mods = [node for node in mods if not is_test_mod_decl(node, source) and is_public_mod(node, source)]
+        private_mods = [node for node in mods if not is_test_mod_decl(node, source) and not is_public_mod(node, source)]
+        groups = [private_mods, public_mods, test_mods]
 
-        for previous, current in zip(ordinary, ordinary[1:]):
-            start = item_end(source, previous)
-            end = item_start(source, current)
-            gap = source[start:end]
+        for group in groups:
+            for previous, current in zip(group, group[1:]):
+                # Skip interleaved layouts: a gap holding another mod
+                # declaration belongs to the structure fixer's reorder.
+                if any(
+                    previous.start_byte < other.start_byte < current.start_byte
+                    for other in mods
+                ):
+                    continue
 
-            if gap.count(b"\n") != 0:
-                violations.append(
-                    violation(
-                        path,
-                        root,
-                        source,
-                        current.start_byte,
-                        "USE_MOD_GROUP_BLANK_LINE",
-                        "mod declarations in the same group must be adjacent",
-                    ),
-                )
-                edits.append((start, end, b""))
+                start = item_end(source, previous)
+                end = item_start(source, current)
+                gap = source[start:end]
 
-        for previous, current in zip(test_mods, test_mods[1:]):
-            start = item_end(source, previous)
-            end = item_start(source, current)
-            gap = source[start:end]
+                if gap.count(b"\n") != 0:
+                    violations.append(
+                        violation(
+                            path,
+                            root,
+                            source,
+                            current.start_byte,
+                            "USE_MOD_GROUP_BLANK_LINE",
+                            "mod declarations in the same block must be adjacent",
+                        ),
+                    )
+                    edits.append((start, end, b""))
 
-            if gap.count(b"\n") != 0:
-                violations.append(
-                    violation(
-                        path,
-                        root,
-                        source,
-                        current.start_byte,
-                        "USE_MOD_GROUP_BLANK_LINE",
-                        "mod tests declarations must be adjacent",
-                    ),
-                )
-                edits.append((start, end, b""))
+        # Separator checks apply only when the blocks are already in order;
+        # a reversed layout is the structure fixer's job.
+        blocks = [group for group in groups if group]
 
-        # The separator check only applies when the groups are already in
-        # order; a reversed layout is the structure fixer's job.
-        if ordinary and test_mods and ordinary[-1].start_byte < test_mods[0].start_byte:
-            start = item_end(source, ordinary[-1])
-            end = item_start(source, test_mods[0])
+        for previous_block, next_block in zip(blocks, blocks[1:]):
+            if not previous_block[-1].start_byte < next_block[0].start_byte:
+                continue
+
+            start = item_end(source, previous_block[-1])
+            end = item_start(source, next_block[0])
             gap = source[start:end]
 
             if gap.count(b"\n") != 1:
@@ -603,9 +609,9 @@ def check_mod_grouping(
                         path,
                         root,
                         source,
-                        test_mods[0].start_byte,
+                        next_block[0].start_byte,
                         "USE_MOD_GROUP_BLANK_LINE",
-                        "mod tests must follow ordinary mod declarations after exactly one blank line",
+                        "mod blocks must be separated by exactly one blank line",
                     ),
                 )
                 edits.append((start, end, b"\n"))
@@ -705,13 +711,18 @@ def first_structure_edit(
         ]
         modules = [node for node in declarations if node.type == "mod_item"]
         test_modules = [node for node in modules if is_test_mod_decl(node, source)]
-        modules = [node for node in modules if not is_test_mod_decl(node, source)]
+        public_modules = [node for node in modules if not is_test_mod_decl(node, source) and is_public_mod(node, source)]
+        private_modules = [node for node in modules if not is_test_mod_decl(node, source) and not is_public_mod(node, source)]
         sections = [
             join_use_chunks(source, ordinary_uses, statements, local_crates),
             join_use_chunks(source, public_uses, statements, local_crates),
             b"\n".join(
                 source[item_start(source, node):item_end(source, node)].strip(b"\r\n")
-                for node in modules
+                for node in private_modules
+            ),
+            b"\n".join(
+                source[item_start(source, node):item_end(source, node)].strip(b"\r\n")
+                for node in public_modules
             ),
             b"\n".join(
                 source[item_start(source, node):item_end(source, node)].strip(b"\r\n")
@@ -1151,6 +1162,50 @@ def self_test() -> int:
 
         if diagnostics:
             print("self-test: mod-group-fixed source still has diagnostics", file=sys.stderr)
+            print("\n".join(str(violation) for violation in diagnostics), file=sys.stderr)
+            return 1
+
+        fixture.write_text(
+            "/// Public module B.\n"
+            "pub mod public_b;\n"
+            "/// Private module A.\n"
+            "mod private_a;\n"
+            "#[cfg(test)]\n"
+            "mod tests {\n"
+            "    use super::*;\n"
+            "}\n"
+            "/// Public module A.\n"
+            "pub mod public_a;\n",
+        )
+        diagnostics, edits = check_file(fixture, root, {root.name}, default_traits)
+
+        if not any(violation.code == "USE_ITEM_ORDER" for violation in diagnostics):
+            print("self-test: pub mod before private mod was accepted", file=sys.stderr)
+            return 1
+
+        apply_fixes(fixture, edits)
+        apply_structure_fixes(fixture, {root.name})
+        fixed = fixture.read_text()
+
+        if not (
+            fixed.index("mod private_a;")
+            < fixed.index("pub mod public_b;")
+            < fixed.index("pub mod public_a;")
+            < fixed.index("mod tests {")
+        ):
+            print("self-test: private/pub/tests mod block order was not fixed", file=sys.stderr)
+            print(fixed, file=sys.stderr)
+            return 1
+
+        if "\n\n/// Public module B." not in fixed or "\n\n#[cfg(test)]" not in fixed:
+            print("self-test: mod blocks are not separated by blank lines", file=sys.stderr)
+            print(fixed, file=sys.stderr)
+            return 1
+
+        diagnostics, _ = check_file(fixture, root, {root.name}, default_traits)
+
+        if diagnostics:
+            print("self-test: visibility-block-fixed source still has diagnostics", file=sys.stderr)
             print("\n".join(str(violation) for violation in diagnostics), file=sys.stderr)
             return 1
 
