@@ -1,0 +1,201 @@
+# spacing-style
+
+> 自定义 Rust 块间距规则：块起始分隔符、直接语句/match arm/enum variant 之间的空行。
+> 代码：`BLK000`、`BLK001`、`BLK002`、`PARSE001` ｜ `--fix`：BLK000/BLK001/BLK002 支持
+
+## 目标
+
+强制统一的块内排版：
+
+1. 多语句/多 match arm 的块，起始 `{` 后必须有一个裸 `//` 分隔符。
+2. 直接相邻的语句、match arm、enum variant 之间必须有空行。
+3. struct 声明/字面量的字段列表里禁止裸 `//` 分隔符；单语句块里的裸 `//` 分隔符是冗余的。
+
+## 裸 `//` 分隔符（bare separator）是什么
+
+匹配 `^\s*//\s*$` 的行——整行只有 `//`（可带前后空白）。纯视觉分割线。
+与之相对的是"真注释"（含实际文本的 `// 注释`）。
+
+一个关键规则：块起始处**只要有真注释就能满足 BLK000 的分隔需求**，不强制必须是裸 `//`。
+
+## BLK000 — 块起始缺裸 `//` 分隔符
+
+> message：`{description} whose opening brace is not on its own line requires a bare // separator before its first {kind}`
+> `description` 取值：`multi-{kind} block`（≥2 个单位）或 `multi-line {kind} block`（单单位跨多行）
+> `kind` 取值：`statement`、`match arm`
+
+### 触发条件
+
+容器类型是 `block` 或 `match_block`，且：
+
+- `{` 不是单独独占一行；且
+- （单位数 ≥ 2 或 首个单位跨多行）；且
+- `{` 与首个单位之间没有裸 `//` 分隔符；且
+- 也没有真注释。
+
+### 违规（BAD）
+
+```rust
+if condition {
+    statement_1();
+
+    statement_2();
+}
+```
+
+单单位跨多行同样要分隔符（如块内一个跨多行的 `match` 表达式）。
+
+### 符合（GOOD）
+
+```rust
+if condition {
+    //
+    statement_1();
+
+    statement_2();
+}
+```
+
+真注释也满足分隔需求：
+
+```rust
+if condition {
+    // Set up the initial state
+    do_first();
+    do_second();
+}
+```
+
+### 豁免
+
+- `{` 单独独占一行（`if condition\n{`）——不需要分隔符。
+- 单语句且单行能放下的紧凑块——不强制。
+- struct 声明/字面量（`field_declaration_list` / `field_initializer_list`）——永不要求分隔符。
+
+### --fix
+
+插入一行 `//`。两种形式：(a) 首单位在后续行时，在 `{` 下一行插入与首单位同缩进的 `//`；
+(b) 极端内联形式 `{ first; second; }` 时，拆行插入 `//` 并重新缩进首单位。
+
+## BLK001 — 单位间缺空行
+
+> message：`missing blank line before this {kind}; previous {kind} ended at line {line_number}`
+> `kind` 取值：`statement`、`match arm`、`enum variant`
+
+### 触发条件
+
+`block` / `match_block` / `enum_variant_list` 容器内两个连续直接单位：
+
+- 不在同一行（`previous.end_point.row != current.start_point.row`）；且
+- 前一个单位结束与当前单位开始之间没有任何全空行。
+
+### 违规（BAD）
+
+```rust
+enum Payload {
+    /// First payload.
+    First,
+    /// Second payload.
+    Second,
+}
+```
+
+### 符合（GOOD）
+
+```rust
+enum Payload {
+    /// First payload.
+    First,
+
+    /// Second payload.
+    Second,
+}
+```
+
+语句间同理：
+
+```rust
+fn example() {
+    //
+    let router = router();
+
+    #[cfg(feature = "swagger-ui")]
+    let router = router.merge(swagger());
+
+    router
+}
+```
+
+### 豁免
+
+- 同行语句（用 `;` 分隔）——不查。
+- struct 字段——不查空行。
+
+### --fix
+
+在当前单位前插入空行。若两个语句之间有解释性注释，空行插在**注释前**，让注释保持附着在其描述的语句上。
+
+## BLK002 — 冗余裸 `//` 分隔符
+
+### 变体一：struct 声明/字面量
+
+> message：`bare // separator is forbidden in struct declarations and struct literals; the field list needs no separator`
+
+`field_declaration_list` / `field_initializer_list` 的 `{` 与首个字段之间存在裸 `//`。
+
+```rust
+// BAD
+struct Payload {
+    //
+    first: String,
+    second: String,
+}
+
+// GOOD
+struct Payload {
+    first: String,
+    second: String,
+}
+```
+
+struct 字面量同理。注意：外层函数块的裸 `//`（`block` 容器）不被此变体标记，只删 struct 里的。
+
+### 变体二：单语句块里的冗余分隔符
+
+> message：`bare // block-start separator is redundant in a single-statement block`
+
+`block` / `match_block` 恰好 1 个单位、单行、且 `{` 与单位之间有裸 `//`。
+
+```rust
+// BAD
+if condition {
+    //
+    return;
+}
+
+// GOOD
+if condition {
+    return;
+}
+```
+
+### --fix
+
+删除裸 `//` 行。若 `{` 与单位之间只有空行和裸 `//`，全部删掉；若有真注释或其他内容，只删裸 `//` 行。
+
+## PARSE001 — Rust 语法解析错误（软警告）
+
+> message：`Rust syntax tree contains {node.type!r}; spacing results near this location may be incomplete`
+
+tree-sitter AST 里出现 `ERROR` 节点或 `is_missing` 节点时提示。**无 fix**——解析错误的文件在 fix 时整体跳过，避免基于不完整节点范围做错误编辑。
+
+## 架构要点（了解即可）
+
+- 外层属性（`#[...]`）与其后的语句组成**一个单位**，不单独计数。`#[cfg(...)]\nlet x = ...` 是一个单位，不会误报 BLK001。
+- 两个 checker 都用 `production_source()` 掩码 `#[cfg(test)]` 模块和 `tests/` 目录——测试代码对间距检查不可见。
+
+## 配置
+
+| 键 | 说明 | 默认 |
+| --- | --- | --- |
+| `ignore_dirs` | 目录名列表，`.rs` 文件发现时跳过（路径任意一段命中即忽略） | `[".git", ".hg", ".svn", ".idea", ".vscode", "target", "node_modules"]` |
