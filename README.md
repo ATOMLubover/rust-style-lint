@@ -27,6 +27,7 @@ only, never modifies source (except checkers that document `--fix`).
 | `module-dependency` | MOD001-002 | `exclude_files` |
 | `visibility-style` | VIS001-002 | `allow_public_fields`, `exclude_files` |
 | `trait-use-anonymous` | TRAIT001 | `external_traits`, `macro_traits`, `macro_markers` |
+| `prefer-if-let-guard` | LET001 | `diverging_macros`, `exclude_segments`, `exclude_filename_prefixes`, `exclude_filenames` |
 
 ## Usage
 

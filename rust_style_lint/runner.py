@@ -24,6 +24,7 @@ CHECKER_NAMES = (
     "module-dependency",
     "visibility-style",
     "trait-use-anonymous",
+    "prefer-if-let-guard",
 )
 
 DEFAULT_SECTIONS: dict[str, dict] = {}

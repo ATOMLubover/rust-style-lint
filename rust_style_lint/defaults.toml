@@ -99,3 +99,8 @@ allow_public_fields = []
 
 [spacing-style]
 ignore_dirs = [".git", ".hg", ".svn", ".idea", ".vscode", "target", "node_modules"]
+
+[prefer-if-let-guard]
+# Macros whose invocation unconditionally diverges, so a match arm calling
+# them is a pure guard (like `return` / `break` / `continue`).
+diverging_macros = ["panic", "unreachable", "todo", "unimplemented"]
