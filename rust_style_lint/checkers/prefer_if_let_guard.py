@@ -246,7 +246,11 @@ def check_file(path: Path, root: Path, macros: frozenset[str]) -> list[Violation
 
         if node.type == "match_expression":
             body = node.child_by_field_name("body")
-            arms = body.named_children if body is not None else []
+            arms = (
+                [child for child in body.named_children if child.type == "match_arm"]
+                if body is not None
+                else []
+            )
 
             kinds = [classify_arm(arm, source, macros) for arm in arms]
             kind = convertible(arms, kinds, source)
@@ -398,6 +402,25 @@ def self_test() -> int:
 
         if len(violations) != 1:
             print(f"self-test: identical multi-guard not flagged; got {len(violations)}", file=sys.stderr)
+            return 1
+
+        # ── flagged: `//` separator comments are not match arms ─────
+
+        fixture.write_text(
+            "pub fn f(value: Option<u8>) {\n"
+            "    let ok = match value {\n"
+            "        //\n"
+            "        // Internal implementation detail.\n"
+            "        Some(x) => x,\n"
+            "\n"
+            "        None => return,\n"
+            "    };\n"
+            "}\n",
+        )
+        violations = check(root)
+
+        if len(violations) != 1:
+            print(f"self-test: comment separators broke detection; got {len(violations)}", file=sys.stderr)
             return 1
 
         # ── kept: two business arms ──────────────────────────────────

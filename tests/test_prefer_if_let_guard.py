@@ -57,6 +57,22 @@ class PreferIfLetGuardTest(unittest.TestCase):
         self.assertEqual(len(found), 1)
         self.assertIn("if let Some(x) = value", found[0].message)
 
+    def test_comment_separators_are_not_arms(self) -> None:
+        found = violations_for(
+            "pub fn f(value: Option<u8>) {\n"
+            "    let ok = match value {\n"
+            "        //\n"
+            "        // Internal implementation detail.\n"
+            "        Some(x) => x,\n"
+            "\n"
+            "        None => return,\n"
+            "    };\n"
+            "}\n"
+        )
+
+        self.assertEqual(len(found), 1)
+        self.assertIn("let Some(x) = value else", found[0].message)
+
     def test_break_guard_in_loop(self) -> None:
         found = violations_for(
             "pub fn f(value: Option<u8>) {\n"
