@@ -178,6 +178,30 @@ class PreferIfLetGuardTest(unittest.TestCase):
 
         self.assertEqual(found, [])
 
+    def test_guard_body_using_pattern_binding_kept(self) -> None:
+        found = violations_for(
+            "pub fn f(value: Result<u8, String>) -> u8 {\n"
+            "    match value {\n"
+            "        Ok(x) => x,\n"
+            "        Err(err) => return err.len() as u8,\n"
+            "    }\n"
+            "}\n"
+        )
+
+        self.assertEqual(found, [])
+
+    def test_wildcard_binding_guard_still_flagged(self) -> None:
+        found = violations_for(
+            "pub fn f(value: Result<u8, String>) -> u8 {\n"
+            "    match value {\n"
+            "        Ok(x) => x,\n"
+            "        Err(_) => return 0,\n"
+            "    }\n"
+            "}\n"
+        )
+
+        self.assertEqual(len(found), 1)
+
     def test_mixed_empty_and_diverging_guards_kept(self) -> None:
         found = violations_for(
             "pub fn f(value: Option<u8>) {\n"

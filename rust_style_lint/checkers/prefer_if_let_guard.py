@@ -171,6 +171,53 @@ def match_scrutinee(match: tree_sitter.Node, source: bytes) -> str:
     return "?"
 
 
+def guard_uses_pattern_binding(arm: tree_sitter.Node, source: bytes) -> bool:
+    """True when the arm body references a binding introduced by its pattern.
+
+    A `let ... else` else block cannot name the value that failed the pattern,
+    so a guard like `Err(err) => return f(err)` has no clean let-else form.
+    Lowercase identifiers in the pattern are bindings (unit variants such as
+    `None`/`Err` are capitalized); if one is referenced by the body, skip the
+    conversion.
+    """
+
+    pattern = arm.child_by_field_name("pattern")
+    value = arm.child_by_field_name("value")
+
+    if pattern is None or value is None:
+        return True
+
+    bound: set[str] = set()
+    pending = [pattern]
+
+    while pending:
+        node = pending.pop()
+
+        if node.type == "identifier":
+            text = node_text(source, node)
+
+            if text and text[0].islower():
+                bound.add(text)
+
+        pending.extend(reversed(node.named_children))
+
+    if not bound:
+        return False
+
+    referenced: set[str] = set()
+    pending = [value]
+
+    while pending:
+        node = pending.pop()
+
+        if node.type == "identifier":
+            referenced.add(node_text(source, node))
+
+        pending.extend(reversed(node.named_children))
+
+    return bool(bound & referenced)
+
+
 def convertible(
     arms: list[tree_sitter.Node],
     kinds: list[str],
@@ -185,6 +232,9 @@ def convertible(
     guards = [i for i, kind in enumerate(kinds) if kind != "business"]
 
     if len(business) != 1 or not guards:
+        return None
+
+    if any(guard_uses_pattern_binding(arms[i], source) for i in guards):
         return None
 
     pattern = arms[business[0]].child_by_field_name("pattern")
@@ -486,6 +536,38 @@ def self_test() -> int:
 
         if violations:
             print(f"self-test: match guard was flagged", file=sys.stderr)
+            return 1
+
+        # ── kept: guard body uses a binding from its own pattern ────
+
+        fixture.write_text(
+            "pub fn f(value: Result<u8, String>) -> u8 {\n"
+            "    match value {\n"
+            "        Ok(x) => x,\n"
+            "        Err(err) => return err.len() as u8,\n"
+            "    }\n"
+            "}\n",
+        )
+        violations = check(root)
+
+        if violations:
+            print(f"self-test: binding-using guard was flagged", file=sys.stderr)
+            return 1
+
+        # ── flagged: guard binds only a wildcard ─────────────────────
+
+        fixture.write_text(
+            "pub fn f(value: Result<u8, String>) -> u8 {\n"
+            "    match value {\n"
+            "        Ok(x) => x,\n"
+            "        Err(_) => return 0,\n"
+            "    }\n"
+            "}\n",
+        )
+        violations = check(root)
+
+        if len(violations) != 1:
+            print(f"self-test: wildcard-binding guard not flagged; got {len(violations)}", file=sys.stderr)
             return 1
 
         # ── kept: mixed empty and diverging guards ───────────────────
