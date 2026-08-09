@@ -25,6 +25,7 @@ CHECKER_NAMES = (
     "visibility-style",
     "trait-use-anonymous",
     "prefer-if-let-guard",
+    "no-unnamed-fields",
 )
 
 DEFAULT_SECTIONS: dict[str, dict] = {}

@@ -20,6 +20,7 @@ doc instead of the source when a rule flags your code:
 | `module-dependency` | MOD001-002 | [module-dependency.md](docs/rules/module-dependency.md) |
 | `no-inline-tests` | TST001 | [no-inline-tests.md](docs/rules/no-inline-tests.md) |
 | `no-type-hint` | NO_TYPE_HINT | [no-type-hint.md](docs/rules/no-type-hint.md) |
+| `no-unnamed-fields` | ENUM001 | [no-unnamed-fields.md](docs/rules/no-unnamed-fields.md) |
 | `prefer-if-let-guard` | LET001 | [prefer-if-let-guard.md](docs/rules/prefer-if-let-guard.md) |
 | `spacing-style` | BLK000-002, PARSE001 | [spacing-style.md](docs/rules/spacing-style.md) |
 | `trait-use-anonymous` | TRAIT001 | [trait-use-anonymous.md](docs/rules/trait-use-anonymous.md) |
@@ -37,6 +38,7 @@ doc instead of the source when a rule flags your code:
 | `use-style` | USE_\* | import grouping, merging, sorting, dedup; `as _` for known traits; `--fix` capable |
 | `generic-where` | GEN001-002 | bounds in `where` clauses; no argument-position `impl Trait` |
 | `no-type-hint` | NO_TYPE_HINT | no `let x: T = …`; pin types with turbofish |
+| `no-unnamed-fields` | ENUM001 | forbid unnamed (tuple) fields in enum variants |
 | `item-layout` | LAYOUT001-004 | impl follows struct; pub before private; helpers in first-call order |
 
 ### Configurable
