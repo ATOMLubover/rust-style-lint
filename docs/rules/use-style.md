@@ -84,10 +84,10 @@ pub use crate::api;
 
 ### USE_ITEM_ORDER — 项顺序
 
-> message：`ordinary use, pub use, private mod, pub mod, mod tests, then other code`
+> message：`private mod, pub mod, mod tests, ordinary use, pub use, then other code`
 
-任意作用域内，语义子节点必须按 rank 升序：普通 `use`=0、`pub use`=1、私有 `mod`=2、
-`pub mod`=3、`mod tests`=4、其他=5。某节点 rank 低于已出现的最高 rank 即违规。
+任意作用域内，语义子节点必须按 rank 升序：私有 `mod`=0、`pub mod`=1、`mod tests`=2、
+普通 `use`=3、`pub use`=4、其他=5。某节点 rank 低于已出现的最高 rank 即违规。
 
 ```rust
 // BAD
@@ -101,16 +101,16 @@ pub use crate::api::Api;
 fn main_code() {}
 
 // GOOD
-use std::time::Duration;
-
-pub use crate::api::Api;
-
 mod before;
 
 #[cfg(test)]
 mod tests {
     use super::*;
 }
+
+use std::time::Duration;
+
+pub use crate::api::Api;
 
 fn main_code() {}
 ```
@@ -328,8 +328,9 @@ use std::io::{Read, Write};
 
 - 项顺序、分组、测试模块结构在**原始源码**上分析（`production_source()` 会掩码 `#[cfg(test)]` 声明，
   恰恰会把要排序的声明藏起来）。其余 `use` 分析在掩码后的生产源码上进行。
-- mod 分组分析：交错布局（间隙里夹着另一个 mod 声明）跳过，交给结构修复器重排；
-  分隔符检查只在块已经有序时生效，颠倒布局是结构修复器的活。
+- 结构修复器是唯一的结构修复者：先收集作用域内全部 `mod` + `use`，渲染成规范标头（mod 在前、use 在后），
+  再重建到作用域头部并删除原声明位置；重建前校验每条声明都出现在标头里，缺失则拒绝修改（绝不删除声明）。
+  `check_mod_grouping` 只报告不修改，间距问题由结构修复器的一次性重建顺带解决。
 
 ## 配置
 

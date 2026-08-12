@@ -510,14 +510,14 @@ def is_public_mod(node: tree_sitter.Node, source: bytes) -> bool:
 
 
 def item_rank(node: tree_sitter.Node, source: bytes) -> int:
-    if node.type == "use_declaration":
-        return 1 if is_public_use(node, source) else 0
-
     if node.type == "mod_item":
         if is_test_mod_decl(node, source):
-            return 4
+            return 2
 
-        return 3 if is_public_mod(node, source) else 2
+        return 1 if is_public_mod(node, source) else 0
+
+    if node.type == "use_declaration":
+        return 4 if is_public_use(node, source) else 3
 
     return 5
 
@@ -533,7 +533,7 @@ def check_item_order(path: Path, root: Path, source: bytes) -> list[Violation]:
             rank = item_rank(node, source)
 
             if rank < highest:
-                expected = "ordinary use, pub use, private mod, pub mod, mod tests, then other code"
+                expected = "private mod, pub mod, mod tests, ordinary use, pub use, then other code"
                 violations.append(violation(path, root, source, node.start_byte, "USE_ITEM_ORDER", expected))
 
             highest = max(highest, rank)
@@ -541,17 +541,12 @@ def check_item_order(path: Path, root: Path, source: bytes) -> list[Violation]:
     return violations
 
 
-def check_mod_grouping(
-    path: Path,
-    root: Path,
-    source: bytes,
-) -> tuple[list[Violation], list[tuple[int, int, bytes]]]:
-    """Mod declarations group like use blocks: private mods, then pub mods,
-    then mod tests. Each block is adjacent internally and separated from
-    the next block by exactly one blank line."""
+def check_mod_grouping(path: Path, root: Path, source: bytes) -> list[Violation]:
+    """Report mod grouping violations; all repairs are handled by the
+    structure fixer's single collect-and-rebuild pass, so this never emits
+    edits (a gap edit here could delete interleaved declarations)."""
     tree = PARSER.parse(source)
     violations: list[Violation] = []
-    edits: list[tuple[int, int, bytes]] = []
 
     for scope in scope_nodes(tree):
         mods = [
@@ -566,17 +561,15 @@ def check_mod_grouping(
 
         for group in groups:
             for previous, current in zip(group, group[1:]):
-                # Skip interleaved layouts: a gap holding another mod
-                # declaration belongs to the structure fixer's reorder.
-                if any(
-                    previous.start_byte < other.start_byte < current.start_byte
-                    for other in mods
-                ):
-                    continue
-
                 start = item_end(source, previous)
                 end = item_start(source, current)
                 gap = source[start:end]
+
+                # Interleaved layouts (a mod, use, or other item sitting
+                # between these declarations) belong to the structure
+                # fixer's reorder, not an adjacency report.
+                if gap.strip():
+                    continue
 
                 if gap.count(b"\n") != 0:
                     violations.append(
@@ -589,7 +582,6 @@ def check_mod_grouping(
                             "mod declarations in the same block must be adjacent",
                         ),
                     )
-                    edits.append((start, end, b""))
 
         # Separator checks apply only when the blocks are already in order;
         # a reversed layout is the structure fixer's job.
@@ -603,6 +595,11 @@ def check_mod_grouping(
             end = item_start(source, next_block[0])
             gap = source[start:end]
 
+            # Content between the blocks (out-of-order mods, pub uses, or
+            # other code) is the structure fixer's job, not a separator report.
+            if gap.strip():
+                continue
+
             if gap.count(b"\n") != 1:
                 violations.append(
                     violation(
@@ -614,9 +611,8 @@ def check_mod_grouping(
                         "mod blocks must be separated by exactly one blank line",
                     ),
                 )
-                edits.append((start, end, b"\n"))
 
-    return violations, edits
+    return violations
 
 
 def check_use_block_boundaries(
@@ -670,11 +666,10 @@ def join_use_chunks(
             current = statements[node.start_byte]
             previous_categories = {category(leaf, local_crates) for leaf in previous.leaves}
             current_categories = {category(leaf, local_crates) for leaf in current.leaves}
-            same_condition = (
-                previous.condition == current.condition
-                and previous.attr_signature == current.attr_signature
-            )
-            separator = b"\n\n" if same_condition and previous_categories != current_categories else b"\n"
+            # Different category groups need a blank line between them even
+            # when a #[cfg] condition splits them; the blank line is what
+            # stops rustfmt's reorder_imports from merging the groups.
+            separator = b"\n\n" if previous_categories != current_categories else b"\n"
             chunks.append(separator)
 
         chunks.append(chunk)
@@ -682,75 +677,142 @@ def join_use_chunks(
     return b"".join(chunks)
 
 
-def first_structure_edit(
+def join_mod_chunks(source: bytes, nodes: list[tree_sitter.Node]) -> bytes:
+    """Join mod declarations in one block: adjacent lines, preserving each
+    declaration's leading comments and attributes."""
+    return b"\n".join(
+        source[item_start(source, node):item_end(source, node)].strip(b"\r\n")
+        for node in nodes
+    )
+
+
+def build_canonical_header(
+    declarations: list[tree_sitter.Node],
+    source: bytes,
+    statements: dict[int, UseStmt],
+    local_crates: set[str],
+) -> bytes:
+    """Render every movable declaration in canonical order: private mods,
+    then pub mods, then mod tests, then ordinary uses, then pub uses."""
+    modules = [node for node in declarations if node.type == "mod_item"]
+    test_modules = [node for node in modules if is_test_mod_decl(node, source)]
+    public_modules = [node for node in modules if not is_test_mod_decl(node, source) and is_public_mod(node, source)]
+    private_modules = [node for node in modules if not is_test_mod_decl(node, source) and not is_public_mod(node, source)]
+    ordinary_uses = [
+        node
+        for node in declarations
+        if node.type == "use_declaration" and not is_public_use(node, source)
+    ]
+    public_uses = [
+        node
+        for node in declarations
+        if node.type == "use_declaration" and is_public_use(node, source)
+    ]
+    sections = [
+        join_mod_chunks(source, private_modules),
+        join_mod_chunks(source, public_modules),
+        join_mod_chunks(source, test_modules),
+        join_use_chunks(source, ordinary_uses, statements, local_crates),
+        join_use_chunks(source, public_uses, statements, local_crates),
+    ]
+
+    return b"\n\n".join(section for section in sections if section) + b"\n"
+
+
+def header_covers_declarations(
+    declarations: list[tree_sitter.Node],
+    source: bytes,
+    header: bytes,
+) -> bool:
+    """Every declaration's source text must survive the rebuild; a header
+    missing any declaration means the fixer would delete it, so refuse."""
+    for node in declarations:
+        chunk = source[item_start(source, node):item_end(source, node)].strip(b"\r\n")
+
+        if chunk not in header:
+            return False
+
+    return True
+
+
+def structure_edit(
     path: Path,
     source: bytes,
     local_crates: set[str],
 ) -> tuple[int, int, bytes] | None:
+    """Rebuild a scope's mod/use header when it is not already canonical.
+
+    Collects every module-scope mod and use declaration, renders them in
+    canonical order (mods first, then uses) at the scope's head, and removes
+    the original declaration positions. Interleaved non-declaration code is
+    preserved. Returns None once the source is already canonical."""
     tree = PARSER.parse(source)
     statements = {statement.start: statement for statement in collect_uses(path, source)}
     scopes = sorted(scope_nodes(tree), key=lambda scope: scope.end_byte - scope.start_byte)
 
     for scope in scopes:
         children = semantic_children(scope)
+        declarations = [
+            node
+            for node in children
+            if node.type in {"use_declaration", "mod_item"}
+        ]
+
+        if not declarations:
+            continue
+
+        header = build_canonical_header(declarations, source, statements, local_crates)
+
+        if not header_covers_declarations(declarations, source, header):
+            continue
+
+        anchor = item_start(source, children[0])
+
+        # Fast path: the declarations already occupy the scope's head and sit
+        # back to back. Replacing the region with the canonical header is then
+        # byte-exact, so the comparison doubles as the idempotency guard.
+        if (
+            item_start(source, declarations[0]) == anchor
+            and all(
+                not source[item_end(source, previous):item_start(source, current)].strip()
+                for previous, current in zip(declarations, declarations[1:])
+            )
+        ):
+            end = item_end(source, declarations[-1])
+            updated = source[:anchor] + header + source[end:]
+
+            if updated == source:
+                continue
+
+            return 0, len(source), updated.rstrip() + b"\n"
+
+        # Interleaved code or an out-of-place mod: delete each original
+        # declaration and insert the canonical header at the scope's head.
         ranks = [item_rank(node, source) for node in children]
 
         if ranks == sorted(ranks):
             continue
 
-        declarations = [node for node in children if node.type in {"use_declaration", "mod_item"}]
-        ordinary_uses = [
-            node
-            for node in declarations
-            if node.type == "use_declaration" and not is_public_use(node, source)
-        ]
-        public_uses = [
-            node
-            for node in declarations
-            if node.type == "use_declaration" and is_public_use(node, source)
-        ]
-        modules = [node for node in declarations if node.type == "mod_item"]
-        test_modules = [node for node in modules if is_test_mod_decl(node, source)]
-        public_modules = [node for node in modules if not is_test_mod_decl(node, source) and is_public_mod(node, source)]
-        private_modules = [node for node in modules if not is_test_mod_decl(node, source) and not is_public_mod(node, source)]
-        sections = [
-            join_use_chunks(source, ordinary_uses, statements, local_crates),
-            join_use_chunks(source, public_uses, statements, local_crates),
-            b"\n".join(
-                source[item_start(source, node):item_end(source, node)].strip(b"\r\n")
-                for node in private_modules
-            ),
-            b"\n".join(
-                source[item_start(source, node):item_end(source, node)].strip(b"\r\n")
-                for node in public_modules
-            ),
-            b"\n".join(
-                source[item_start(source, node):item_end(source, node)].strip(b"\r\n")
-                for node in test_modules
-            ),
-        ]
-        header = b"\n\n".join(section for section in sections if section) + b"\n\n"
-        anchor = item_start(source, children[0])
         edits: list[tuple[int, int, bytes]] = []
         replaced_anchor = False
 
         for node in declarations:
             start = item_start(source, node)
-            end = item_end(source, node)
+            node_end = item_end(source, node)
 
             if start == anchor:
-                edits.append((start, end, header))
+                edits.append((start, node_end, header))
                 replaced_anchor = True
             else:
-                edits.append((start, end, b""))
+                edits.append((start, node_end, b""))
 
         if not replaced_anchor:
             edits.append((anchor, anchor, header))
 
         updated = source
 
-        for start, end, replacement in sorted(edits, reverse=True):
-            updated = updated[:start] + replacement + updated[end:]
+        for start, node_end, replacement in sorted(edits, reverse=True):
+            updated = updated[:start] + replacement + updated[node_end:]
 
         return 0, len(source), updated.rstrip() + b"\n"
 
@@ -844,9 +906,7 @@ def check_file(
     # source: production_source() masks #[cfg(test)] mod declarations, which
     # would hide exactly the declarations these checks must order.
     violations.extend(check_item_order(path, root, raw_source))
-    mod_group_violations, mod_group_edits = check_mod_grouping(path, root, raw_source)
-    violations.extend(mod_group_violations)
-    edits.extend(mod_group_edits)
+    violations.extend(check_mod_grouping(path, root, raw_source))
     violations.extend(check_single_test_module(path, root, raw_source))
 
     for block in contiguous_blocks(source, statements):
@@ -956,7 +1016,7 @@ def apply_fixes(path: Path, edits: list[tuple[int, int, bytes]]) -> None:
 def apply_structure_fixes(path: Path, local_crates: set[str]) -> None:
     for _ in range(100):
         source = path.read_bytes()
-        edit = first_structure_edit(path, source, local_crates)
+        edit = structure_edit(path, source, local_crates)
 
         if edit is None:
             return
@@ -1085,8 +1145,15 @@ def self_test() -> int:
         apply_structure_fixes(fixture, {root.name})
         fixed = fixture.read_text()
 
-        if fixed.index("use std") > fixed.index("pub use") or fixed.index("pub use") > fixed.index("mod before"):
-            print("self-test: use/pub use/mod order was not fixed", file=sys.stderr)
+        if not (
+            fixed.index("mod before")
+            < fixed.index("mod tests")
+            < fixed.index("use std")
+            < fixed.index("pub use")
+            < fixed.index("fn main_code")
+        ):
+            print("self-test: mod/use/pub use order was not fixed", file=sys.stderr)
+            print(fixed, file=sys.stderr)
             return 1
 
         # mod tests forms its own block after every ordinary mod declaration.
@@ -1151,6 +1218,7 @@ def self_test() -> int:
             return 1
 
         apply_fixes(fixture, edits)
+        apply_structure_fixes(fixture, {root.name})
         fixed = fixture.read_text()
 
         if "mod first;\n/// Second module." not in fixed:
@@ -1206,6 +1274,61 @@ def self_test() -> int:
 
         if diagnostics:
             print("self-test: visibility-block-fixed source still has diagnostics", file=sys.stderr)
+            print("\n".join(str(violation) for violation in diagnostics), file=sys.stderr)
+            return 1
+
+        # A private mod and pub uses sitting between mod blocks must be
+        # reordered, never deleted by the mod-grouping separator edit.
+        fixture.write_text(
+            "use crate::cell::error::Error;\n"
+            "use crate::cell::id::{ModelCallId, ToolCallId};\n"
+            "use crate::cell::state::State;\n"
+            "\n"
+            "pub mod error;\n"
+            "pub mod id;\n"
+            "pub mod notice;\n"
+            "pub mod ready;\n"
+            "mod state;\n"
+            "\n"
+            "pub use notice::Notice;\n"
+            "pub use ready::Ready;\n"
+            "\n"
+            "#[cfg(test)]\n"
+            "mod tests;\n"
+            "\n"
+            "fn code() {}\n",
+        )
+        diagnostics, edits = check_file(fixture, root, {root.name}, default_traits)
+
+        if not any(violation.code == "USE_ITEM_ORDER" for violation in diagnostics):
+            print("self-test: interleaved mod/pub-use layout was accepted", file=sys.stderr)
+            return 1
+
+        apply_fixes(fixture, edits)
+        apply_structure_fixes(fixture, {root.name})
+        fixed = fixture.read_text()
+
+        for declaration in ("mod state;", "pub use notice::Notice;", "pub use ready::Ready;"):
+            if declaration not in fixed:
+                print(f"self-test: fixer deleted `{declaration}`", file=sys.stderr)
+                print(fixed, file=sys.stderr)
+                return 1
+
+        if not (
+            fixed.index("mod state;")
+            < fixed.index("pub mod error;")
+            < fixed.index("mod tests;")
+            < fixed.index("use crate::cell::state::State;")
+            < fixed.index("pub use notice::Notice;")
+        ):
+            print("self-test: interleaved mod/pub-use layout was not reordered", file=sys.stderr)
+            print(fixed, file=sys.stderr)
+            return 1
+
+        diagnostics, _ = check_file(fixture, root, {root.name}, default_traits)
+
+        if diagnostics:
+            print("self-test: interleaved-layout fixed source still has diagnostics", file=sys.stderr)
             print("\n".join(str(violation) for violation in diagnostics), file=sys.stderr)
             return 1
 
