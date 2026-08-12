@@ -657,12 +657,23 @@ def join_use_chunks(
 ) -> bytes:
     chunks: list[bytes] = []
 
-    for index, node in enumerate(nodes):
+    # Sort into canonical category groups (super, std, third_party,
+    # local_crate, crate); a #[cfg]-gated use stays inside its category
+    # group with its attribute intact, so groups never interleave.
+    ordered = sorted(
+        nodes,
+        key=lambda node: min(
+            CATEGORIES.index(category(leaf, local_crates))
+            for leaf in statements[node.start_byte].leaves
+        ),
+    )
+
+    for index, node in enumerate(ordered):
         start = item_start(source, node)
         chunk = source[start:item_end(source, node)].strip(b"\r\n")
 
         if index:
-            previous = statements[nodes[index - 1].start_byte]
+            previous = statements[ordered[index - 1].start_byte]
             current = statements[node.start_byte]
             previous_categories = {category(leaf, local_crates) for leaf in previous.leaves}
             current_categories = {category(leaf, local_crates) for leaf in current.leaves}
