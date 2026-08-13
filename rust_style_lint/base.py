@@ -13,6 +13,8 @@ class Violation:
     code: str
     message: str
     column: int | None = None
+    # "error" fails the run; "warning" is reported but does not fail it.
+    level: str = "error"
 
 
 def source_files(root: Path, subdir: str = "src") -> list[Path]:

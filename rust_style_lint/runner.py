@@ -116,19 +116,21 @@ def main() -> int:
         section = config.get(name)
         violations = run_checker(module, root, section, args.fix)
 
-        if violations:
-            failed = True
+        for violation in violations:
+            location = (
+                f"{violation.path}:{violation.line}:{violation.column}"
+                if violation.column is not None
+                else f"{violation.path}:{violation.line}"
+            )
+            prefix = "warning" if violation.level == "warning" else "error"
 
-            for violation in violations:
-                location = (
-                    f"{violation.path}:{violation.line}:{violation.column}"
-                    if violation.column is not None
-                    else f"{violation.path}:{violation.line}"
-                )
-                print(
-                    f"{location}: {violation.code}: {violation.message}",
-                    file=sys.stderr,
-                )
+            if violation.level != "warning":
+                failed = True
+
+            print(
+                f"{location}: {violation.code}: {prefix}: {violation.message}",
+                file=sys.stderr,
+            )
 
     return 1 if failed else 0
 

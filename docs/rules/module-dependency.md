@@ -120,6 +120,19 @@ pub struct C(A);
 | 触发 | 依赖边本身指向严格祖先，无论有没有更大的环 | 边位于多模块 SCC 内 |
 | 关系 | — | 一条边既向上又在环里时，会同时报 MOD001 和 MOD002 |
 
+## MOD003 — 重名定义（警告，不失败）
+
+> message：`duplicate {type alias|struct|trait} name `{name}` defined in {modules}`
+
+扫描全部生产模块，收集模块级 `type` 别名、`struct`、`trait` 定义。同一名字在**两个或更多不同模块**
+里各定义一次时，每个定义位置各报一条 `MOD003`。比如父模块 `engine` 定义了 `pub type AgentEngineResult`，
+子模块 `engine::lifecycle` 又私有定义 `type AgentEngineResult` 覆盖它——这会报两条 `MOD003` 警告。
+
+**`MOD003` 是 `level="warning"`，只打印、不判失败**（runner 只对 `error` 级违规返回非 0）。
+它提示命名冲突/遮蔽是个坏味道，但能编译，所以不阻塞。
+
+test 模块（`prefixes` 命中）里的定义不计入。
+
 ## 路径如何解析（super / self / crate）
 
 - `crate::` 或 crate 名（从 `Cargo.toml` 的 name 读取）→ 相对 crate 根 `()` 解析。

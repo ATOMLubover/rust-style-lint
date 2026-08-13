@@ -18,6 +18,9 @@ from ..base import Violation
 
 PATH_KINDS = {"scoped_identifier", "scoped_type_identifier"}
 IDENTIFIER_KINDS = {"identifier", "type_identifier"}
+# Module-level definitions whose names must not collide across modules.
+NAME_ITEM_KINDS = {"type_item", "struct_item", "trait_item"}
+KIND_LABELS = {"type_item": "type alias", "struct_item": "struct", "trait_item": "trait"}
 PARSER = tree_sitter.Parser(tree_sitter.Language(tree_sitter_rust.language()))
 INTERNAL_ATTRIBUTE_PATH = re.compile(
     r"(?<![A-Za-z0-9_])(?:crate|self|super)(?:::[A-Za-z_][A-Za-z0-9_]*)+"
@@ -858,6 +861,81 @@ def edge_violation(edge: Edge, root: Path, code: str, message: str) -> Violation
     )
 
 
+def collect_module_definitions(
+    source: bytes,
+    module: tuple[str, ...],
+    node: tree_sitter.Node,
+    definitions: list[tuple[tuple[str, ...], str, str, tree_sitter.Node]],
+) -> None:
+    """Collect module-scope type alias / struct / trait definitions, descending
+    into inline module bodies but not into functions or impl blocks."""
+    for child in node.named_children:
+        if child.type in NAME_ITEM_KINDS:
+            name = child.child_by_field_name("name")
+
+            if name is not None:
+                definitions.append((module, child.type, node_text(source, name), child))
+
+        elif child.type == "mod_item":
+            body = child.child_by_field_name("body")
+
+            if body is not None:
+                mod_name = child.child_by_field_name("name")
+                inner = module + ((node_text(source, mod_name),) if mod_name is not None else ())
+                collect_module_definitions(source, inner, body, definitions)
+
+
+def duplicate_name_warnings(root: Path, config: dict | None) -> list[Violation]:
+    """Report same-named type aliases / structs / traits defined in two or more
+    production modules as non-fatal warnings (a child shadowing a parent's name
+    is a smell, but it compiles and must not fail the run)."""
+    paths, _, prefixes = discover_crate(root, config)
+    by_name: dict[str, list[tuple[tuple[str, ...], Path, str, tree_sitter.Node, bytes]]] = {}
+
+    for path in paths:
+        module = file_module(root / "src", path)
+
+        if excluded_module(module, prefixes):
+            continue
+
+        source = path.read_bytes()
+        definitions: list[tuple[tuple[str, ...], str, str, tree_sitter.Node]] = []
+        collect_module_definitions(source, module, PARSER.parse(source).root_node, definitions)
+
+        for def_module, kind, name, node in definitions:
+            if excluded_module(def_module, prefixes):
+                continue
+
+            by_name.setdefault(name, []).append((def_module, path, kind, node, source))
+
+    warnings: list[Violation] = []
+
+    for name, definitions in sorted(by_name.items()):
+        modules_with_name = {definition[0] for definition in definitions}
+
+        if len(modules_with_name) < 2:
+            continue
+
+        module_list = ", ".join(format_module(value) for value in sorted(modules_with_name))
+
+        for def_module, path, kind, node, source in definitions:
+            warnings.append(
+                Violation(
+                    path=path.relative_to(root),
+                    line=node.start_point.row + 1,
+                    column=node.start_point.column + 1,
+                    code="MOD003",
+                    message=(
+                        f"duplicate {KIND_LABELS[kind]} name `{name}` "
+                        f"defined in {module_list}"
+                    ),
+                    level="warning",
+                )
+            )
+
+    return sorted(warnings, key=lambda violation: (str(violation.path), violation.line, violation.column))
+
+
 def check(root: Path, config: dict | None = None) -> list[Violation]:
     """Return upward-dependency and cycle violations in src/."""
     root = root.resolve()
@@ -888,6 +966,8 @@ def check(root: Path, config: dict | None = None) -> list[Violation]:
             for edge in edges
             if edge.source in members and edge.target in members
         )
+
+    violations.extend(duplicate_name_warnings(root, config))
 
     return sorted(
         violations,
@@ -1038,9 +1118,10 @@ def main() -> int:
     violations = check(args.root.resolve())
 
     for violation in violations:
-        print(f"{violation.path}:{violation.line}:{violation.column}: {violation.code}: {violation.message}", file=sys.stderr)
+        prefix = "warning" if violation.level == "warning" else "error"
+        print(f"{violation.path}:{violation.line}:{violation.column}: {violation.code}: {prefix}: {violation.message}", file=sys.stderr)
 
-    return 1 if violations else 0
+    return 1 if any(violation.level != "warning" for violation in violations) else 0
 
 
 if __name__ == "__main__":
