@@ -992,7 +992,19 @@ def check_file(
             )
             first = segment[0]
             prefix = source[first.attr_start : first.start]
-            replacement = prefix + rendered.encode()
+
+            if prefix.strip():
+                # A #[cfg] / attribute gates only the immediately following
+                # item, so every rendered use line in the segment must carry
+                # the segment's attributes, not just the first one.
+                rendered = b"".join(
+                    prefix + line.encode() + b"\n" if line.strip() else b"\n"
+                    for line in rendered.split("\n")
+                ).rstrip(b"\n")
+                replacement = rendered
+            else:
+                replacement = prefix + rendered.encode()
+
             edits.append((first.attr_start, segment[-1].end, replacement))
 
     return violations, edits
@@ -1125,8 +1137,9 @@ def self_test() -> int:
         apply_fixes(fixture, edits)
         fixed = fixture.read_text()
 
-        if "use std::{mem::take, time};" in fixed or fixed.count("#[cfg(feature = \"a\")]") != 1:
+        if fixed.count("#[cfg(feature = \"a\")]") != 2 or fixed.count("use std::mem::take;") != 1:
             print("self-test: cfg-safe use fix was not applied", file=sys.stderr)
+            print(fixed, file=sys.stderr)
             return 1
 
         diagnostics, _ = check_file(fixture, root, {root.name}, default_traits)
