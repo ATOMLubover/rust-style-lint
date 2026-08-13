@@ -13,6 +13,7 @@ from .base import Violation
 CONFIG_FILENAME = "rust-style-lint.toml"
 
 CHECKER_NAMES = (
+    "no-allow",
     "no-inline-tests",
     "spacing-style",
     "use-style",
