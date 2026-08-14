@@ -189,6 +189,50 @@ if condition {
 
 tree-sitter AST 里出现 `ERROR` 节点或 `is_missing` 节点时提示。**无 fix**——解析错误的文件在 fix 时整体跳过，避免基于不完整节点范围做错误编辑。
 
+## 宏体（macro body）检查
+
+tree-sitter 把宏调用体解析成不透明的 `token_tree`，里面**没有** `block` / `match_block`
+节点——所以只查真实容器的话，`tokio::select!` 等宏体内的 spacing 问题完全查不到。
+
+此 checker 会**下沉进宏体**，复刻 rustfmt 的两级策略：
+
+1. **Tier 1（按 Rust 解析）**：取宏体花括号内层字节单独重解析，若**无 `ERROR` 节点**
+   （arm 体、内层 `match`、`else` 块、`return;`/`break;` 等），按完整规则跑 BLK000/BLK001/BLK002
+   ——含**语句级**空行检查，不只限 match arm。位置经字节偏移映射回原文件。
+2. **Tier 2（`=>` match-like 启发式）**：重解析失败的是自定义语法（select! 的
+   `pattern = expr, if guard => body`、裸 match arm 列表等），在 token 层按顶层 `=>` 切分 arm，
+   报 arm 级 BLK000/BLK001。按 `=>` 切分而非逗号——`if guard` 的逗号属于 arm 内部。
+
+宏体内的诊断一律是 **`warning`**（不 fail 退出码），message 追加 `(macro body)` 后缀，
+且**永不 `--fix`**——宏体是自定义语法，不能安全改写，须按规则手改。
+
+跳过：`macro_rules!` 定义体（`macro_definition`）、`(...)` / `[...]` 定界的宏
+（`vec!`、`format!`、`println!` 等）。
+
+```rust
+// BAD —— 全在宏体内，报 warning
+tokio::select! {
+    command = recv.recv() => {
+        handle();
+    }
+    task = recv2.recv() => {
+        handle2();
+    }
+}
+
+// GOOD
+tokio::select! {
+    //
+    command = recv.recv() => {
+        handle();
+    }
+
+    task = recv2.recv() => {
+        handle2();
+    }
+}
+```
+
 ## 架构要点（了解即可）
 
 - 外层属性（`#[...]`）与其后的语句组成**一个单位**，不单独计数。`#[cfg(...)]\nlet x = ...` 是一个单位，不会误报 BLK001。

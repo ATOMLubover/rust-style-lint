@@ -4,9 +4,10 @@ lines between direct statements, match arms, and enum variants."""
 from __future__ import annotations
 
 import argparse
+import bisect
 import re
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from tree_sitter import Language, Node, Parser
@@ -49,6 +50,34 @@ class FileAnalysis:
     diagnostics: tuple[Violation, ...]
     edits: tuple[TextEdit, ...]
     has_parse_errors: bool
+
+
+@dataclass(frozen=True)
+class MappedPoint:
+    row: int
+    column: int
+
+
+@dataclass(frozen=True)
+class MappedNode:
+    """A node from a macro-fragment re-parse whose positions were remapped to
+    the original file. Exposes only the attributes the spacing helpers read."""
+
+    type: str
+    start_point: MappedPoint
+    end_point: MappedPoint
+    start_byte: int
+    end_byte: int
+
+
+@dataclass(frozen=True)
+class ContainerView:
+    """A block/match_block shaped object fed to `_analyze_container` for
+    macro-body content, mirroring the node attributes that helper reads."""
+
+    type: str
+    named_children: tuple[MappedNode, ...]
+    children: tuple[object, ...]
 
 
 class RustSpacingChecker:
@@ -113,6 +142,22 @@ class RustSpacingChecker:
 
             diagnostics.extend(container_diagnostics)
             edits.extend(container_edits)
+
+        # Macro bodies are opaque token trees to tree-sitter, so no
+        # block/match_block nodes exist inside them. Re-parse each macro
+        # body fragment that is valid Rust (arm bodies, nested matches, …)
+        # and apply the same rules, warning-only; fall back to a `=>`
+        # match-like heuristic for custom fragments (select! arm lists).
+        diagnostics.extend(
+            self._analyze_macro_invocations(
+                path=path,
+                source=source,
+                lines=lines,
+                line_starts=line_starts,
+                newline=newline,
+                nodes=nodes,
+            )
+        )
 
         unique_diagnostics = sorted(
             set(diagnostics),
@@ -379,6 +424,313 @@ class RustSpacingChecker:
 
         return violations
 
+    def _point_for(self, line_starts: list[int], byte: int) -> MappedPoint:
+        row = bisect.bisect_right(line_starts, byte) - 1
+        return MappedPoint(row=row, column=byte - line_starts[row] + 1)
+
+    def _mapped_node(
+        self,
+        line_starts: list[int],
+        base_byte: int,
+        node: Node,
+        node_type: str | None = None,
+    ) -> MappedNode:
+        start_byte = base_byte + node.start_byte
+        end_byte = base_byte + node.end_byte
+
+        return MappedNode(
+            type=node_type or node.type,
+            start_point=self._point_for(line_starts, start_byte),
+            end_point=self._point_for(line_starts, end_byte),
+            start_byte=start_byte,
+            end_byte=end_byte,
+        )
+
+    @staticmethod
+    def _macro_violation(violation: Violation) -> Violation:
+        return replace(
+            violation,
+            level="warning",
+            message=f"{violation.message} (macro body)",
+        )
+
+    def _analyze_macro_invocations(
+        self,
+        *,
+        path: Path,
+        source: bytes,
+        lines: list[str],
+        line_starts: list[int],
+        newline: bytes,
+        nodes: list[Node],
+    ) -> list[Violation]:
+        diagnostics: list[Violation] = []
+
+        for node in nodes:
+            if node.type != "macro_invocation":
+                continue
+
+            tt = brace_body(node)
+
+            if tt is not None:
+                diagnostics.extend(
+                    self._analyze_braced(
+                        tt=tt,
+                        tt_base=0,
+                        path=path,
+                        source=source,
+                        lines=lines,
+                        line_starts=line_starts,
+                        newline=newline,
+                    )
+                )
+
+        return diagnostics
+
+    def _analyze_braced(
+        self,
+        *,
+        tt: Node,
+        tt_base: int,
+        path: Path,
+        source: bytes,
+        lines: list[str],
+        line_starts: list[int],
+        newline: bytes,
+    ) -> list[Violation]:
+        open_brace = tt.children[0]
+        close_brace = tt.children[-1]
+        inner_start = tt_base + open_brace.end_byte
+        inner_end = tt_base + close_brace.start_byte
+        inner = source[inner_start:inner_end]
+        sub = self.parser.parse(inner)
+        sub_nodes = iter_nodes(sub.root_node)
+
+        # The fragment is not valid Rust (select! arm list, bare match arms,
+        # custom DSL): fall back to the `=>` match-like heuristic.
+        if any(node.type == "ERROR" for node in sub_nodes):
+            return self._analyze_custom_body(
+                tt=tt,
+                tt_base=tt_base,
+                path=path,
+                source=source,
+                lines=lines,
+                line_starts=line_starts,
+                newline=newline,
+            )
+
+        diagnostics: list[Violation] = []
+
+        # The token_tree itself is a block whose units are the fragment's
+        # top-level statements (or the single match expression).
+        diagnostics.extend(
+            self._analyze_container_as_block(
+                tt=tt,
+                tt_base=tt_base,
+                sub=sub,
+                base_byte=inner_start,
+                path=path,
+                source=source,
+                lines=lines,
+                line_starts=line_starts,
+                newline=newline,
+            )
+        )
+
+        # Real nested containers (else blocks, inner match blocks, …) inside
+        # the fragment get the same treatment as top-level ones.
+        for node in sub_nodes:
+            if node.type not in (
+                BLOCK_CONTAINERS | STRUCT_FIELD_CONTAINERS | ENUM_VARIANT_CONTAINERS
+            ):
+                continue
+
+            diagnostics.extend(
+                self._macro_violation(violation)
+                for violation in self._analyze_container_from_sub_node(
+                    node=node,
+                    base_byte=inner_start,
+                    path=path,
+                    source=source,
+                    lines=lines,
+                    line_starts=line_starts,
+                    newline=newline,
+                )
+            )
+
+        # Nested macro invocations inside the fragment recurse.
+        for node in sub_nodes:
+            if node.type != "macro_invocation":
+                continue
+
+            nested_tt = brace_body(node)
+
+            if nested_tt is not None:
+                diagnostics.extend(
+                    self._analyze_braced(
+                        tt=nested_tt,
+                        tt_base=inner_start,
+                        path=path,
+                        source=source,
+                        lines=lines,
+                        line_starts=line_starts,
+                        newline=newline,
+                    )
+                )
+
+        return diagnostics
+
+    def _analyze_container_as_block(
+        self,
+        *,
+        tt: Node,
+        tt_base: int,
+        sub,
+        base_byte: int,
+        path: Path,
+        source: bytes,
+        lines: list[str],
+        line_starts: list[int],
+        newline: bytes,
+    ) -> list[Violation]:
+        members = tuple(
+            self._mapped_node(line_starts, base_byte, child)
+            for child in sub.root_node.named_children
+        )
+
+        if not members:
+            return []
+
+        brace = self._mapped_node(line_starts, tt_base, tt.children[0], node_type="{")
+        close = self._mapped_node(line_starts, tt_base, tt.children[-1], node_type="}")
+        container = ContainerView(
+            type="block",
+            named_children=members,
+            children=(brace, *members, close),
+        )
+
+        diagnostics, _ = self._analyze_container(
+            path=path,
+            source=source,
+            lines=lines,
+            line_starts=line_starts,
+            newline=newline,
+            container=container,
+            build_fixes=False,
+        )
+
+        return [self._macro_violation(violation) for violation in diagnostics]
+
+    def _analyze_container_from_sub_node(
+        self,
+        *,
+        node: Node,
+        base_byte: int,
+        path: Path,
+        source: bytes,
+        lines: list[str],
+        line_starts: list[int],
+        newline: bytes,
+    ) -> list[Violation]:
+        units = tuple(
+            self._mapped_node(line_starts, base_byte, unit)
+            for unit in direct_units(node)
+        )
+
+        if not units:
+            return []
+
+        brace_node = opening_brace(node)
+
+        if brace_node is None:
+            return []
+
+        brace = self._mapped_node(line_starts, base_byte, brace_node, node_type="{")
+        close = self._mapped_node(line_starts, base_byte, node.children[-1], node_type="}")
+        container = ContainerView(
+            type=node.type,
+            named_children=units,
+            children=(brace, *units, close),
+        )
+
+        diagnostics, _ = self._analyze_container(
+            path=path,
+            source=source,
+            lines=lines,
+            line_starts=line_starts,
+            newline=newline,
+            container=container,
+            build_fixes=False,
+        )
+
+        return diagnostics
+
+    def _analyze_custom_body(
+        self,
+        *,
+        tt: Node,
+        tt_base: int,
+        path: Path,
+        source: bytes,
+        lines: list[str],
+        line_starts: list[int],
+        newline: bytes,
+    ) -> list[Violation]:
+        diagnostics: list[Violation] = []
+        arms = match_like_arms(tt)
+
+        if len(arms) >= 2:
+            units = tuple(
+                MappedNode(
+                    type="match_arm",
+                    start_point=self._point_for(line_starts, tt_base + start.start_byte),
+                    end_point=self._point_for(line_starts, tt_base + body.end_byte),
+                    start_byte=tt_base + start.start_byte,
+                    end_byte=tt_base + body.end_byte,
+                )
+                for start, body in arms
+            )
+            brace = self._mapped_node(line_starts, tt_base, tt.children[0], node_type="{")
+            close = self._mapped_node(line_starts, tt_base, tt.children[-1], node_type="}")
+            container = ContainerView(
+                type="match_block",
+                named_children=units,
+                children=(brace, *units, close),
+            )
+
+            container_diagnostics, _ = self._analyze_container(
+                path=path,
+                source=source,
+                lines=lines,
+                line_starts=line_starts,
+                newline=newline,
+                container=container,
+                build_fixes=False,
+            )
+
+            diagnostics.extend(
+                self._macro_violation(violation)
+                for violation in container_diagnostics
+            )
+
+        # Arm bodies and any other direct brace groups are blocks or nested
+        # match-like groups; recurse into them.
+        for child in tt.children:
+            if is_brace_token_tree(child):
+                diagnostics.extend(
+                    self._analyze_braced(
+                        tt=child,
+                        tt_base=tt_base,
+                        path=path,
+                        source=source,
+                        lines=lines,
+                        line_starts=line_starts,
+                        newline=newline,
+                    )
+                )
+
+        return diagnostics
+
 
 def iter_nodes(root: Node) -> list[Node]:
     """Collect all Node wrappers immediately.
@@ -398,6 +750,54 @@ def iter_nodes(root: Node) -> list[Node]:
         stack.extend(reversed(children))
 
     return result
+
+
+def is_brace_token_tree(node: Node) -> bool:
+    return node.type == "token_tree" and bool(node.children) and node.children[0].type == "{"
+
+
+def brace_body(node: Node) -> Node | None:
+    """The brace-delimited token_tree body of a macro invocation, if any."""
+    return next((child for child in node.children if is_brace_token_tree(child)), None)
+
+
+def match_like_arms(tt: Node) -> list[tuple[Node, Node]]:
+    """Return `(pattern_start, body)` pairs for the top-level `=>` arms of a
+    brace token_tree. Arms are split on `=>` (never on commas: a select!
+    branch's `, if guard` comma lives inside the pattern)."""
+    children = list(tt.children)
+    length = len(children)
+    arms: list[tuple[Node, Node]] = []
+    index = 1  # skip the opening '{'
+
+    while index < length:
+        child = children[index]
+
+        if child.type == "}":
+            break
+
+        if child.type == "," or child.type in COMMENT_NODE_TYPES | {"attribute_item"}:
+            index += 1
+            continue
+
+        pattern_start = child
+        arrow = index
+
+        while arrow < length and children[arrow].type not in {"=>", "}"}:
+            arrow += 1
+
+        if arrow >= length or children[arrow].type == "}":
+            break
+
+        body = children[arrow + 1] if arrow + 1 < length else None
+
+        if body is not None and is_brace_token_tree(body):
+            arms.append((pattern_start, body))
+            index = arrow + 2  # skip '=>' and its body
+        else:
+            index = arrow + 1
+
+    return arms
 
 
 def direct_units(container: Node) -> list[Node]:

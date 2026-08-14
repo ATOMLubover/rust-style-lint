@@ -157,6 +157,145 @@ class RustSpacingCheckerTest(unittest.TestCase):
 """,
         )
 
+    def test_macro_select_branches_need_separator_and_blank_line(self) -> None:
+        analysis = self.analyze(
+            """fn run(recv: &mut Receiver, actor: &mut Actor) {
+    //
+    loop {
+        //
+        tokio::select! {
+            command = recv.recv() => {
+                handle();
+            }
+            task = recv2.recv() => {
+                handle2();
+            }
+        }
+    }
+}
+"""
+        )
+
+        self.assertEqual(
+            [(diagnostic.code, diagnostic.line) for diagnostic in analysis.diagnostics],
+            [("BLK000", 6), ("BLK001", 9)],
+        )
+        self.assertTrue(
+            all(diagnostic.level == "warning" for diagnostic in analysis.diagnostics)
+        )
+
+    def test_macro_select_compliant_body_is_clean(self) -> None:
+        analysis = self.analyze(
+            """fn run(recv: &mut Receiver, actor: &mut Actor) {
+    //
+    tokio::select! {
+        //
+        command = recv.recv() => {
+            handle();
+        }
+
+        task = recv2.recv() => {
+            handle2();
+        }
+    }
+}
+"""
+        )
+
+        self.assertEqual(analysis.diagnostics, ())
+
+    def test_macro_inner_match_arms_need_blank_lines(self) -> None:
+        analysis = self.analyze(
+            """fn run(recv: &mut Receiver, actor: &mut Actor) {
+    //
+    tokio::select! {
+        //
+        command = recv.recv() => {
+            match task {
+                Some(Ok((tid, ev))) => {
+                    actor.task_event(ev);
+                }
+                None => {}
+            }
+        }
+    }
+}
+"""
+        )
+
+        self.assertEqual(
+            [(diagnostic.code, diagnostic.line) for diagnostic in analysis.diagnostics],
+            [("BLK000", 6), ("BLK000", 7), ("BLK001", 10)],
+        )
+        self.assertTrue(
+            all(diagnostic.level == "warning" for diagnostic in analysis.diagnostics)
+        )
+
+    def test_macro_statement_level_in_arm_body(self) -> None:
+        analysis = self.analyze(
+            """fn run(recv: &mut Receiver, actor: &mut Actor) {
+    //
+    tokio::select! {
+        //
+        command = recv.recv() => {
+            let Some(command) = command else {
+                actor.shutdown();
+                return;
+            };
+
+            if !actor.command(command).await {
+                return;
+            }
+        }
+    }
+}
+"""
+        )
+
+        self.assertEqual(
+            [(diagnostic.code, diagnostic.line) for diagnostic in analysis.diagnostics],
+            [("BLK000", 6), ("BLK000", 7), ("BLK001", 8)],
+        )
+
+    def test_macro_rules_definition_is_skipped(self) -> None:
+        analysis = self.analyze(
+            """macro_rules! m {
+    ($x:expr) => { 1 };
+    ($x:ty) => { 2 };
+}
+
+fn f() {
+    //
+    let v = vec![1, 2, 3];
+
+    let s = format!("x={}", v);
+}
+"""
+        )
+
+        self.assertEqual(analysis.diagnostics, ())
+
+    def test_macro_bodies_never_produce_edits(self) -> None:
+        source = """fn run(recv: &mut Receiver, actor: &mut Actor) {
+    //
+    loop {
+        //
+        tokio::select! {
+            command = recv.recv() => {
+                handle();
+            }
+            task = recv2.recv() => {
+                handle2();
+            }
+        }
+    }
+}
+"""
+        analysis = self.analyze(source, build_fixes=True)
+
+        self.assertTrue(any(diagnostic.level == "warning" for diagnostic in analysis.diagnostics))
+        self.assertEqual(analysis.edits, ())
+
     def test_nested_variant_struct_and_following_variant_do_not_overlap(self) -> None:
         source = """enum Payload {
     First {
