@@ -33,6 +33,49 @@ STRUCT_FIELD_CONTAINERS = {
 ENUM_VARIANT_CONTAINERS = {
     "enum_variant_list",
 }
+# Module-scope item containers: the file root and the declaration_list body of
+# an inline `mod`. impl/trait/extern method bodies are deliberately excluded —
+# item spacing is a module-scope rule.
+ITEM_CONTAINER_TYPES = {
+    "source_file",
+    "declaration_list",
+}
+# Every item that counts as a "big block" needing a blank line around it.
+ITEM_TYPES = {
+    "use_declaration",
+    "function_item",
+    "struct_item",
+    "enum_item",
+    "union_item",
+    "impl_item",
+    "trait_item",
+    "mod_item",
+    "const_item",
+    "static_item",
+    "type_item",
+    "macro_definition",
+    "macro_invocation",
+    "expression_statement",
+    "extern_crate_declaration",
+    "foreign_mod_item",
+    "function_signature_item",
+    "associated_type",
+}
+# Non-item nodes that attach to the following item: outer attributes and
+# comments stay glued to the item they document, so a missing blank line is
+# reported before the whole group.
+ITEM_ATTACH_TYPES = {
+    "attribute_item",
+    "inner_attribute_item",
+    "line_comment",
+    "block_comment",
+}
+# Consecutive same-type header items are grouped (use-style owns their
+# internal spacing), so no blank line is forced between them.
+HEADER_ITEM_TYPES = {
+    "use_declaration",
+    "mod_item",
+}
 
 BARE_SEPARATOR_RE = re.compile(r"^\s*//\s*$")
 
@@ -142,6 +185,24 @@ class RustSpacingChecker:
 
             diagnostics.extend(container_diagnostics)
             edits.extend(container_edits)
+
+        # Item-level spacing: module-scope items (top level and nested mod
+        # bodies) must be separated by a blank line.
+        for container in nodes:
+            if not is_item_container(container):
+                continue
+
+            item_diagnostics, item_edits = self._analyze_item_container(
+                path=path,
+                lines=lines,
+                line_starts=line_starts,
+                newline=newline,
+                container=container,
+                build_fixes=build_fixes,
+            )
+
+            diagnostics.extend(item_diagnostics)
+            edits.extend(item_edits)
 
         # Macro bodies are opaque token trees to tree-sitter, so no
         # block/match_block nodes exist inside them. Re-parse each macro
@@ -390,6 +451,71 @@ class RustSpacingChecker:
                     container=container,
                     previous=previous,
                     current=current_anchor,
+                )
+
+                if edit is not None:
+                    edits.append(edit)
+
+        return diagnostics, edits
+
+    def _analyze_item_container(
+        self,
+        *,
+        path: Path,
+        lines: list[str],
+        line_starts: list[int],
+        newline: bytes,
+        container: Node,
+        build_fixes: bool,
+    ) -> tuple[list[Violation], list[TextEdit]]:
+        items = [
+            child
+            for child in container.named_children
+            if child.type in ITEM_TYPES
+        ]
+
+        if len(items) < 2:
+            return [], []
+
+        diagnostics: list[Violation] = []
+        edits: list[TextEdit] = []
+
+        for index, current in enumerate(items[1:], start=1):
+            previous = items[index - 1]
+
+            # Consecutive use/mod declarations stay grouped; use-style owns
+            # their internal blank-line rules.
+            if previous.type == current.type and previous.type in HEADER_ITEM_TYPES:
+                continue
+
+            anchor = item_anchor(container, current)
+
+            # Two items on the same line (e.g. split by `;`) need no blank line.
+            if previous.end_point.row == anchor.start_point.row:
+                continue
+
+            if has_blank_line_between(lines, previous, anchor):
+                continue
+
+            diagnostics.append(
+                Violation(
+                    path=self._relative(path),
+                    line=anchor.start_point.row + 1,
+                    column=anchor.start_point.column + 1,
+                    code="BLK003",
+                    message=(
+                        f"missing blank line before this {item_kind(current)}; "
+                        f"previous {item_kind(previous)} ended at line "
+                        f"{previous.end_point.row + 1}"
+                    ),
+                ),
+            )
+
+            if build_fixes:
+                edit = build_item_blank_line_edit(
+                    line_starts=line_starts,
+                    newline=newline,
+                    anchor=anchor,
                 )
 
                 if edit is not None:
@@ -732,6 +858,16 @@ class RustSpacingChecker:
         return diagnostics
 
 
+def is_item_container(node: Node) -> bool:
+    if node.type not in ITEM_CONTAINER_TYPES:
+        return False
+
+    if node.type == "source_file":
+        return True
+
+    return node.parent is not None and node.parent.type == "mod_item"
+
+
 def iter_nodes(root: Node) -> list[Node]:
     """Collect all Node wrappers immediately.
 
@@ -850,6 +986,55 @@ def unit_anchor(container: Node, unit: Node) -> Node:
             continue
 
         if child.type in COMMENT_NODE_TYPES:
+            continue
+
+        break
+
+    return anchor
+
+
+ITEM_KIND_NAMES = {
+    "use_declaration": "use declaration",
+    "mod_item": "module",
+    "struct_item": "struct",
+    "enum_item": "enum",
+    "union_item": "union",
+    "impl_item": "impl block",
+    "trait_item": "trait",
+    "function_item": "function",
+    "function_signature_item": "trait method",
+    "const_item": "constant",
+    "static_item": "static",
+    "type_item": "type alias",
+    "associated_type": "associated type",
+    "macro_definition": "macro definition",
+    "macro_invocation": "macro invocation",
+    "expression_statement": "macro invocation",
+    "extern_crate_declaration": "extern crate",
+    "foreign_mod_item": "extern block",
+}
+
+
+def item_kind(node: Node) -> str:
+    return ITEM_KIND_NAMES.get(node.type, node.type)
+
+
+def item_anchor(container: Node, item: Node) -> Node:
+    """Return the first leading outer attribute or comment belonging to an
+    item, so a missing blank line is measured against the start of the whole
+    attached group. `empty_statement` (the `;` after a top-level macro
+    invocation) belongs to the previous item and never anchors."""
+    anchor = item
+
+    for child in reversed(container.named_children):
+        if child.end_byte > anchor.start_byte:
+            continue
+
+        if child.type in ITEM_ATTACH_TYPES:
+            anchor = child
+            continue
+
+        if child.type == "empty_statement":
             continue
 
         break
@@ -1002,6 +1187,26 @@ def build_block_start_separator_edit(
         end_byte=first.start_byte,
         replacement=(newline + indent + b"//" + newline + indent),
         code="BLK000",
+    )
+
+
+def build_item_blank_line_edit(
+    *,
+    line_starts: list[int],
+    newline: bytes,
+    anchor: Node,
+) -> TextEdit | None:
+    """Insert a blank line before the item's leading comment/attribute."""
+    row = anchor.start_point.row
+
+    if row >= len(line_starts):
+        return None
+
+    return TextEdit(
+        start_byte=line_starts[row],
+        end_byte=line_starts[row],
+        replacement=newline,
+        code="BLK003",
     )
 
 

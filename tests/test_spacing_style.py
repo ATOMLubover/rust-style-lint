@@ -326,6 +326,169 @@ fn f() {
 """,
         )
 
+    def test_item_use_struct_requires_blank_line(self) -> None:
+        source = """use crate::result::BaseRest;
+/// Constraints bound into a presigned image upload request.
+pub struct ImageUploadSpec<'a> {
+    pub object_key: &'a str,
+}
+"""
+        analysis = self.analyze(source, build_fixes=True)
+        fixed = apply_edits(source.encode(), analysis.edits)
+
+        self.assertEqual(
+            [(diagnostic.code, diagnostic.line) for diagnostic in analysis.diagnostics],
+            [("BLK003", 2)],
+        )
+        self.assertEqual(
+            fixed.decode(),
+            """use crate::result::BaseRest;
+
+/// Constraints bound into a presigned image upload request.
+pub struct ImageUploadSpec<'a> {
+    pub object_key: &'a str,
+}
+""",
+        )
+
+    def test_item_struct_impl_requires_blank_line(self) -> None:
+        source = """pub struct Good;
+impl Good { pub fn create() {} }
+"""
+        analysis = self.analyze(source, build_fixes=True)
+        fixed = apply_edits(source.encode(), analysis.edits)
+
+        self.assertEqual(
+            [(diagnostic.code, diagnostic.line) for diagnostic in analysis.diagnostics],
+            [("BLK003", 2)],
+        )
+        self.assertEqual(
+            fixed.decode(),
+            """pub struct Good;
+
+impl Good { pub fn create() {} }
+""",
+        )
+
+    def test_item_consecutive_uses_are_grouped(self) -> None:
+        source = """use a::A;
+use b::B;
+pub struct S;
+"""
+        analysis = self.analyze(source, build_fixes=True)
+        fixed = apply_edits(source.encode(), analysis.edits)
+
+        self.assertEqual(
+            [(diagnostic.code, diagnostic.line) for diagnostic in analysis.diagnostics],
+            [("BLK003", 3)],
+        )
+        self.assertEqual(
+            fixed.decode(),
+            """use a::A;
+use b::B;
+
+pub struct S;
+""",
+        )
+
+    def test_item_consecutive_mods_are_grouped(self) -> None:
+        source = """mod first;
+mod second;
+pub struct S;
+"""
+        analysis = self.analyze(source)
+
+        self.assertEqual(
+            [(diagnostic.code, diagnostic.line) for diagnostic in analysis.diagnostics],
+            [("BLK003", 3)],
+        )
+
+    def test_item_mod_use_are_separate_types(self) -> None:
+        source = """mod inner {
+    fn f() {}
+}
+use std::fmt;
+"""
+        analysis = self.analyze(source, build_fixes=True)
+        fixed = apply_edits(source.encode(), analysis.edits)
+
+        self.assertEqual(
+            [(diagnostic.code, diagnostic.line) for diagnostic in analysis.diagnostics],
+            [("BLK003", 4)],
+        )
+        self.assertEqual(
+            fixed.decode(),
+            """mod inner {
+    fn f() {}
+}
+
+use std::fmt;
+""",
+        )
+
+    def test_item_attribute_attaches_to_item(self) -> None:
+        source = """impl Foo {}
+#[derive(Debug)]
+pub struct S;
+"""
+        analysis = self.analyze(source, build_fixes=True)
+        fixed = apply_edits(source.encode(), analysis.edits)
+
+        self.assertEqual(
+            [(diagnostic.code, diagnostic.line) for diagnostic in analysis.diagnostics],
+            [("BLK003", 2)],
+        )
+        self.assertEqual(
+            fixed.decode(),
+            """impl Foo {}
+
+#[derive(Debug)]
+pub struct S;
+""",
+        )
+
+    def test_item_nested_mod_body_enforced(self) -> None:
+        source = """mod outer {
+    fn helper() {}
+    pub struct Inner;
+}
+"""
+        analysis = self.analyze(source, build_fixes=True)
+        fixed = apply_edits(source.encode(), analysis.edits)
+
+        self.assertEqual(
+            [(diagnostic.code, diagnostic.line) for diagnostic in analysis.diagnostics],
+            [("BLK003", 3)],
+        )
+        self.assertEqual(
+            fixed.decode(),
+            """mod outer {
+    fn helper() {}
+
+    pub struct Inner;
+}
+""",
+        )
+
+    def test_item_impl_methods_are_not_checked(self) -> None:
+        source = """impl Foo {
+    fn a(&self) {}
+    fn b(&self) {}
+}
+"""
+        analysis = self.analyze(source)
+
+        self.assertEqual(analysis.diagnostics, ())
+
+    def test_item_first_and_same_line_are_exempt(self) -> None:
+        source = """fn a() {} fn b() {}
+
+fn c() {}
+"""
+        analysis = self.analyze(source)
+
+        self.assertEqual(analysis.diagnostics, ())
+
 
 if __name__ == "__main__":
     unittest.main()

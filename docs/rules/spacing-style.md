@@ -1,15 +1,16 @@
 # spacing-style
 
-> 自定义 Rust 块间距规则：块起始分隔符、直接语句/match arm/enum variant 之间的空行。
-> 代码：`BLK000`、`BLK001`、`BLK002`、`PARSE001` ｜ `--fix`：BLK000/BLK001/BLK002 支持
+> 自定义 Rust 块间距规则：块起始分隔符、语句/match arm/enum variant/模块项之间的空行。
+> 代码：`BLK000`–`BLK003`、`PARSE001` ｜ `--fix`：BLK000/BLK001/BLK002/BLK003 支持
 
 ## 目标
 
-强制统一的块内排版：
+强制统一的排版：
 
 1. 多语句/多 match arm 的块，起始 `{` 后必须有一个裸 `//` 分隔符。
 2. 直接相邻的语句、match arm、enum variant 之间必须有空行。
 3. struct 声明/字面量的字段列表里禁止裸 `//` 分隔符；单语句块里的裸 `//` 分隔符是冗余的。
+4. 模块作用域内的项（struct/impl/trait/fn/mod/use/const/static/type/…）之间必须有空行。
 
 ## 裸 `//` 分隔符（bare separator）是什么
 
@@ -182,6 +183,53 @@ if condition {
 ### --fix
 
 删除裸 `//` 行。若 `{` 与单位之间只有空行和裸 `//`，全部删掉；若有真注释或其他内容，只删裸 `//` 行。
+
+## BLK003 — 项之间缺空行
+
+> message：`missing blank line before this {kind}; previous {kind} ended at line {line_number}`
+> `kind` 取值：`struct`、`impl block`、`trait`、`function`、`module`、`use declaration`、`constant`、`static`、`type alias`、`enum`、`union`、`macro definition`、`macro invocation`、`extern crate`、`extern block` 等
+
+### 触发条件
+
+模块作用域（顶层 `source_file` 与内联 `mod { … }` 的 `declaration_list`）内，两个连续的直接"项"
+之间没有空行。项 = struct/enum/union/impl/trait/fn/mod/use/const/static/type/macro_rules!/宏调用/extern crate/extern 块等。
+
+### 违规（BAD）
+
+```rust
+use crate::result::BaseRest;
+/// Constraints bound into a presigned image upload request.
+pub struct ImageUploadSpec<'a> {
+    pub object_key: &'a str,
+}
+```
+
+### 符合（GOOD）
+
+```rust
+use crate::result::BaseRest;
+
+/// Constraints bound into a presigned image upload request.
+pub struct ImageUploadSpec<'a> {
+    pub object_key: &'a str,
+}
+```
+
+### 豁免
+
+- 容器内第一个项——前面没有东西可比。
+- 同行的两个项（`fn a() {} fn b() {}`）——不查。
+- 连续的同类型 header 项：`use`↔`use`、`mod`↔`mod`——不强制空行，内部分组交给 use-style 管理。
+- `impl`/`trait`/`extern` 体内的 method——不查（本规则只到模块作用域）。
+
+### 锚点（anchor）
+
+项的前导注释/属性（`///`、`//`、`#[...]`）随项一起移动：空行要求落在整组之前，缺失时在
+注释/属性行首插入空行，注释保持附着在其描述的项上。
+
+### --fix
+
+在当前项（或它的前导注释/属性）的行首插入一个空行。
 
 ## PARSE001 — Rust 语法解析错误（软警告）
 

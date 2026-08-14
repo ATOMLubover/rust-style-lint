@@ -23,7 +23,7 @@ doc instead of the source when a rule flags your code:
 | `no-type-hint` | NO_TYPE_HINT | [no-type-hint.md](docs/rules/no-type-hint.md) |
 | `no-unnamed-fields` | ENUM001 | [no-unnamed-fields.md](docs/rules/no-unnamed-fields.md) |
 | `prefer-if-let-guard` | LET001 | [prefer-if-let-guard.md](docs/rules/prefer-if-let-guard.md) |
-| `spacing-style` | BLK000-002, PARSE001 | [spacing-style.md](docs/rules/spacing-style.md) |
+| `spacing-style` | BLK000-003, PARSE001 | [spacing-style.md](docs/rules/spacing-style.md) |
 | `trait-use-anonymous` | TRAIT001 | [trait-use-anonymous.md](docs/rules/trait-use-anonymous.md) |
 | `use-style` | USE_\* (14 rules) | [use-style.md](docs/rules/use-style.md) |
 | `visibility-style` | VIS001-002 | [visibility-style.md](docs/rules/visibility-style.md) |
@@ -36,7 +36,7 @@ doc instead of the source when a rule flags your code:
 | --- | --- | --- |
 | `no-inline-tests` | TST001 | `#[cfg(test)] mod tests { … }` must live in a separate `tests.rs` |
 | `no-inline-format` | FMT001 | no `{name}` inline captures in format strings — all args positional |
-| `spacing-style` | BLK000-002 | block-start `//` separator, blank lines between direct statements / match arms / enum variants |
+| `spacing-style` | BLK000-003 | block-start `//` separator, blank lines between direct statements / match arms / enum variants / module-scope items |
 | `use-style` | USE_\* | import grouping, merging, sorting, dedup; `as _` for known traits; `--fix` capable |
 | `generic-where` | GEN001-002 | bounds in `where` clauses; no argument-position `impl Trait` |
 | `no-type-hint` | NO_TYPE_HINT | no `let x: T = …`; pin types with turbofish |
