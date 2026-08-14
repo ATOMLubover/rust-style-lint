@@ -14,6 +14,7 @@ CONFIG_FILENAME = "rust-style-lint.toml"
 
 CHECKER_NAMES = (
     "no-allow",
+    "no-inline-format",
     "no-inline-tests",
     "spacing-style",
     "use-style",

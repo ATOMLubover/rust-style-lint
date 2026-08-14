@@ -100,6 +100,21 @@ allow_public_fields = []
 [spacing-style]
 ignore_dirs = [".git", ".hg", ".svn", ".idea", ".vscode", "target", "node_modules"]
 
+[no-inline-format]
+# Format-like macros whose token tree starts with the format string
+# (write!/writeln! carry the writer first, the format string second).
+macros = [
+    "format",
+    "format_args",
+    "print",
+    "println",
+    "eprint",
+    "eprintln",
+    "panic",
+    "write",
+    "writeln",
+]
+
 [prefer-if-let-guard]
 # Macros whose invocation unconditionally diverges, so a match arm calling
 # them is a pure guard (like `return` / `break` / `continue`).
