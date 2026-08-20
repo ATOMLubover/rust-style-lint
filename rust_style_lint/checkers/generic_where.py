@@ -1,4 +1,4 @@
-"""Require generic type and lifetime bounds to use a where clause."""
+"""Enforce canonical generic bounds and where clauses."""
 
 from __future__ import annotations
 
@@ -69,6 +69,33 @@ def is_return_position(node: tree_sitter.Node) -> bool:
     return parent.child_by_field_name("return_type") == cursor
 
 
+def repeated_where_predicates(
+    node: tree_sitter.Node,
+    source: bytes,
+) -> list[tuple[tree_sitter.Node, str]]:
+    seen: set[bytes] = set()
+    repeated: list[tuple[tree_sitter.Node, str]] = []
+
+    for predicate in node.named_children:
+        if predicate.type != "where_predicate":
+            continue
+
+        left = predicate.child_by_field_name("left")
+
+        if left is None:
+            continue
+
+        key = source[left.start_byte : left.end_byte]
+
+        if key in seen:
+            repeated.append((predicate, key.decode()))
+            continue
+
+        seen.add(key)
+
+    return repeated
+
+
 def check_file(path: Path, root: Path) -> list[Violation]:
     source = production_source(path, root)
     tree = PARSER.parse(source)
@@ -113,6 +140,20 @@ def check_file(path: Path, root: Path) -> list[Violation]:
                 ),
             )
 
+        if node.type == "where_clause":
+            for predicate, left in repeated_where_predicates(node, source):
+                violations.append(
+                    Violation(
+                        path=path.relative_to(root),
+                        line=predicate.start_point.row + 1,
+                        code="GEN003",
+                        message=(
+                            f"where predicate for {left} is repeated; "
+                            f"merge all bounds for {left} into one predicate"
+                        ),
+                    ),
+                )
+
         pending.extend(reversed(node.named_children))
 
     return violations
@@ -129,7 +170,7 @@ def excluded(path: Path, root: Path, config: dict | None) -> bool:
 
 
 def check(root: Path, config: dict | None = None) -> list[Violation]:
-    """Return violations for inline bounds and argument-position impl Trait."""
+    """Return violations for non-canonical generic bounds and where clauses."""
     return [
         violation
         for path in sorted((root / "src").rglob("*.rs"))
@@ -149,6 +190,8 @@ def self_test() -> int:
             "fn constrained<T>() where T: Copy {}\n"
             "struct Item<T> where T: Copy {}\n"
             "impl<T> Item<T> where T: Copy {}\n"
+            "fn merged<T>() where T: Copy + Send {}\n"
+            "fn distinct<T, U>() where T: Copy, U: Send {}\n"
             "fn return_opaque() -> impl Iterator<Item = u8> { todo!() }\n"
             "#[cfg(test)]\n"
             "mod tests { fn ignored<T: Copy>() {} }\n",
@@ -167,6 +210,7 @@ def self_test() -> int:
             "type BadAlias<T: Copy> = Vec<T>;\n"
             "union BadUnion<T: Copy> { value: T }\n"
             "fn bad_impl_trait(develop: &(impl EffectDevelop + Sync), other: impl Other) {}\n"
+            "fn repeated<T>() where T: Copy, T: Send {}\n"
             "#[cfg(any(test, feature = \"extra\"))]\n"
             "mod maybe_production { fn bad_mod<T: Copy>() {} }\n",
         )
@@ -174,7 +218,11 @@ def self_test() -> int:
 
         codes = [violation.code for violation in violations]
 
-        if codes.count("GEN001") != 9 or codes.count("GEN002") != 2:
+        if (
+            codes.count("GEN001") != 9
+            or codes.count("GEN002") != 2
+            or codes.count("GEN003") != 1
+        ):
             print("self-test: inline generic syntax was not fully diagnosed", file=sys.stderr)
             print("\n".join(str(violation) for violation in violations), file=sys.stderr)
             return 1

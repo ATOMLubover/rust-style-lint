@@ -1,13 +1,15 @@
 # generic-where
 
-> 要求泛型类型/生命周期约束必须写在 `where` 子句里；禁止参数位置的 `impl Trait`。
-> 代码：`GEN001`（内联约束）、`GEN002`（参数位置 impl Trait）｜ `--fix`：不支持（仅检测）
+> 要求泛型类型/生命周期约束必须写在 `where` 子句里；禁止参数位置的 `impl Trait`；
+> 同一个 `where` 子句不得拆分同一主体的约束。
+> 代码：`GEN001`（内联约束）、`GEN002`（参数位置 impl Trait）、`GEN003`（重复 where predicate）｜ `--fix`：不支持（仅检测）
 
 ## 目标
 
 - 泛型参数上的约束（`T: Copy`、`'a: 'static`）必须移到 `where` 子句。
 - 参数位置的 `impl Trait` 一律禁止——引入具名泛型参数，把约束放进 `where` 子句。
   返回值位置的 `impl Trait`（`-> impl Trait`）**允许**。
+- 同一个 `where` 子句中，同一约束主体只能出现一次；所有 bounds 必须合并。
 
 ## GEN001 — 泛型参数内联约束
 
@@ -70,6 +72,42 @@ fn bad_impl_trait(develop: &(impl EffectDevelop + Sync), other: impl Other) {}
 
 ```rust
 fn return_opaque() -> impl Iterator<Item = u8> { todo!() }
+```
+
+## GEN003 — 重复 where predicate
+
+> message：`where predicate for {left} is repeated; merge all bounds for {left} into one predicate`
+
+### 触发条件
+
+遍历所有 `where_clause`，读取其中每个 `where_predicate` 的 `left` 字段。
+同一个子句内，完全相同的 `left` 第一次出现合法，第二次及以后每条分别报告。
+检查不依赖外层声明类型，因此函数、类型、trait、`impl` 和关联项中的 `where` 都覆盖。
+类型参数、生命周期、关联类型和其他复杂类型主体统一处理；不同 `where` 子句互不影响。
+
+### 违规（BAD）
+
+```rust
+impl<L> Step<L> for Repo
+where
+    L: Level + Send,
+    L: AtLeast<RepeatableRead>, // GEN003
+{}
+```
+
+### 符合（GOOD）
+
+```rust
+impl<L> Step<L> for Repo
+where
+    L: Level + Send + AtLeast<RepeatableRead>,
+{}
+
+fn distinct<T, U>()
+where
+    T: Copy,
+    U: Send,
+{}
 ```
 
 ## 配置
