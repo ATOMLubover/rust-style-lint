@@ -117,13 +117,31 @@ fn main_code() {}
 
 **可 fix**（结构修复器重新排序全部声明）。
 
-### USE_MOD_GROUP_BLANK_LINE — mod 分组规则（两条，同一 code）
+### USE_MOD_GROUP_BLANK_LINE — mod 分组规则（三条，同一 code）
 
 > message（同组相邻）：`mod declarations in the same block must be adjacent`
+> message（cfg 块分隔）：`mod blocks with different cfg conditions must be separated by exactly one blank line`
 > message（块间分隔）：`mod blocks must be separated by exactly one blank line`
 
-同可见性类（私有 / pub / `#[cfg(test)]`）的连续 `mod_item` 之间不能有空白行（必须相邻）；
-而不同可见性块之间必须恰好一个空行。
+同可见性类（私有 / pub / `mod tests`）内，相同 cfg 条件的连续 `mod_item` 不能有空白行；
+cfg 条件不同则划为不同内部块，块间必须恰好一个空行。不同可见性块之间仍必须恰好一个空行。
+
+```rust
+// BAD —— cfg(all(...)) 和 cfg(...) 属于不同内部块
+#[cfg(all(feature = "a", feature = "b"))]
+mod both;
+#[cfg(feature = "a")]
+mod a;
+
+// GOOD
+#[cfg(all(feature = "a", feature = "b"))]
+mod both;
+
+#[cfg(feature = "a")]
+mod a;
+#[cfg(feature = "a")]
+mod a_extra;
+```
 
 ```rust
 // BAD —— 同组有空白行
@@ -177,7 +195,7 @@ mod tests {
 }
 ```
 
-**可 fix**（同组删空白行 / 块间补一个空行）。
+**可 fix**（相同 cfg 的同组声明删空白行 / 不同 cfg 或可见性块间补一个空行）。
 
 ### USE_MULTIPLE_TEST_MODS — 每文件最多一个 `#[cfg(test)]` mod
 
@@ -275,6 +293,32 @@ use crate::local::Thing;
 ```
 
 **可 fix**（重渲染时不同类别组间插 `\n\n`）。
+
+### USE_CFG_BLOCK_BLANK_LINE — 不同 cfg 的 use 块之间恰好一个空行
+
+> message：`use blocks with different cfg conditions must be separated by exactly one blank line`
+
+同一 ordinary-use 或 pub-use 区域内，相邻声明的规范化 cfg 条件不同，二者之间必须恰好一个空行。
+这里只划分 `use` 内部块，不改变 mod、use、其他 item 之间已有的顺序或空行规则。
+
+```rust
+// BAD
+#[cfg(all(feature = "a", feature = "b"))]
+use std::cmp::Ordering;
+#[cfg(feature = "a")]
+use std::mem::take;
+
+// GOOD
+#[cfg(all(feature = "a", feature = "b"))]
+use std::cmp::Ordering;
+
+#[cfg(feature = "a")]
+use std::mem::take;
+#[cfg(feature = "a")]
+use std::time::Duration;
+```
+
+**可 fix**（结构修复器在 cfg 块之间插入 `\n\n`）。
 
 ### USE_DUPLICATE_IMPORT — 去重
 

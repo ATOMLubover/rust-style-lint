@@ -25,7 +25,7 @@ doc instead of the source when a rule flags your code:
 | `prefer-if-let-guard` | LET001 | [prefer-if-let-guard.md](docs/rules/prefer-if-let-guard.md) |
 | `spacing-style` | BLK000-003, PARSE001 | [spacing-style.md](docs/rules/spacing-style.md) |
 | `trait-use-anonymous` | TRAIT001 | [trait-use-anonymous.md](docs/rules/trait-use-anonymous.md) |
-| `use-style` | USE_\* (14 rules) | [use-style.md](docs/rules/use-style.md) |
+| `use-style` | USE_\* (15 rules) | [use-style.md](docs/rules/use-style.md) |
 | `visibility-style` | VIS001-002 | [visibility-style.md](docs/rules/visibility-style.md) |
 
 ## Checkers
@@ -51,7 +51,7 @@ doc instead of the source when a rule flags your code:
 | `forbidden-identifiers` | FBD001-011 | `words` (extra forbidden segments), `skip_module_paths`, `ignore_files`, `exclude_filenames` |
 | `module-dependency` | MOD001-002 | `exclude_files` |
 | `visibility-style` | VIS001-002 | `allow_public_fields`, `exclude_files` |
-| `trait-use-anonymous` | TRAIT001 | `external_traits`, `macro_traits`, `macro_markers` |
+| `trait-use-anonymous` | TRAIT001 | `macro_markers` |
 | `prefer-if-let-guard` | LET001 | `diverging_macros`, `exclude_segments`, `exclude_filename_prefixes`, `exclude_filenames` |
 
 ## Usage

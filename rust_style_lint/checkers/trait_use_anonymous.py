@@ -25,8 +25,6 @@ class TraitImport:
     path: str
     local_name: str
     alias: str | None
-    start_byte: int
-    end_byte: int
     line: int
 
 
@@ -111,26 +109,6 @@ def use_leaves(
     return []
 
 
-def trait_names(root: Path) -> set[str]:
-    names: set[str] = set()
-
-    for path in rust_files(root):
-        source = path.read_bytes()
-        tree = PARSER.parse(source)
-
-        for declaration in descendants(tree.root_node, "trait_item"):
-            name = declaration.child_by_field_name("name")
-
-            if name is not None:
-                names.add(node_text(source, name))
-
-    return names
-
-
-def is_trait_path(path: str, names: set[str], known_traits: set[str]) -> bool:
-    return path in known_traits or path.rsplit("::", 1)[-1] in names
-
-
 def is_inside_use(node: tree_sitter.Node) -> bool:
     current = node.parent
 
@@ -143,19 +121,21 @@ def is_inside_use(node: tree_sitter.Node) -> bool:
     return False
 
 
+def is_type_name(name: str) -> bool:
+    significant = name.lstrip("_")
+
+    return bool(significant) and significant[0].isupper()
+
+
 def explicitly_used(
     tree: tree_sitter.Tree,
     source: bytes,
     imported: TraitImport,
-    macro_traits: set[str],
     macro_markers: list[str],
 ) -> bool:
-    if imported.path in macro_traits and any(marker.encode() in source for marker in macro_markers):
-        return True
-
     for macro in descendants(tree.root_node, "macro_invocation"):
-        if macro.start_byte <= imported.end_byte:
-            continue
+        if any(marker in node_text(source, macro) for marker in macro_markers):
+            return True
 
         if re.search(
             rf"\b{re.escape(imported.local_name)}\b",
@@ -167,9 +147,6 @@ def explicitly_used(
         tree.root_node,
         "type_identifier",
     ):
-        if node.start_byte <= imported.end_byte:
-            continue
-
         if node_text(source, node) != imported.local_name:
             continue
 
@@ -184,15 +161,16 @@ def explicitly_used(
 def imports_in_file(
     path: Path,
     root: Path,
-    names: set[str],
-    known_traits: set[str],
 ) -> list[TraitImport]:
     source = production_source(path, root)
     tree = PARSER.parse(source)
     imports: list[TraitImport] = []
 
     for declaration in descendants(tree.root_node, "use_declaration"):
-        if declaration.child_by_field_name("visibility") is not None:
+        if any(
+            child.type == "visibility_modifier"
+            for child in declaration.named_children
+        ):
             continue
 
         for path_name, alias, path_node in use_leaves(declaration, source):
@@ -201,7 +179,7 @@ def imports_in_file(
 
             local_name = alias or path_name.rsplit("::", 1)[-1]
 
-            if alias == "_" or not is_trait_path(path_name, names, known_traits):
+            if alias == "_" or not is_type_name(local_name):
                 continue
 
             imports.append(
@@ -209,8 +187,6 @@ def imports_in_file(
                     path=path_name,
                     local_name=local_name,
                     alias=alias,
-                    start_byte=path_node.start_byte,
-                    end_byte=declaration.end_byte,
                     line=path_node.start_point.row + 1,
                 )
             )
@@ -221,17 +197,14 @@ def imports_in_file(
 def check_file(
     path: Path,
     root: Path,
-    names: set[str],
-    known_traits: set[str],
-    macro_traits: set[str],
     macro_markers: list[str],
 ) -> list[Violation]:
     source = production_source(path, root)
     tree = PARSER.parse(source)
     violations: list[Violation] = []
 
-    for imported in imports_in_file(path, root, names, known_traits):
-        if explicitly_used(tree, source, imported, macro_traits, macro_markers):
+    for imported in imports_in_file(path, root):
+        if explicitly_used(tree, source, imported, macro_markers):
             continue
 
         violations.append(
@@ -249,31 +222,25 @@ def check_file(
     return violations
 
 
-def configured_traits(config: dict) -> tuple[set[str], set[str], list[str]]:
-    known = {str(trait) for trait in config.get("external_traits", [])}
-    macro_traits = {str(trait) for trait in config.get("macro_traits", [])}
-    markers = [str(marker) for marker in config.get("macro_markers", [])]
-
-    return known, macro_traits, markers
+def configured_macro_markers(config: dict) -> list[str]:
+    return [str(marker) for marker in config.get("macro_markers", [])]
 
 
 def check(root: Path, config: dict | None = None) -> list[Violation]:
     """Return method-resolution-only trait imports under the project root."""
     root = root.resolve()
     section = merged("trait-use-anonymous", config)
-    names = trait_names(root)
-    known_traits, macro_traits, macro_markers = configured_traits(section)
+    macro_markers = configured_macro_markers(section)
 
     return [
         violation
         for path in rust_files(root)
-        for violation in check_file(path, root, names, known_traits, macro_traits, macro_markers)
+        for violation in check_file(path, root, macro_markers)
     ]
 
 
 def self_test() -> int:
     config = {
-        "external_traits": ["poprako_util::time::ToUnixMilli"],
         "macro_markers": ["preloadable!"],
     }
 

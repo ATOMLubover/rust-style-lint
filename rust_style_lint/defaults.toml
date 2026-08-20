@@ -70,23 +70,6 @@ traits = [
 ]
 
 [trait-use-anonymous]
-external_traits = [
-    "anyhow::Context",
-    "futures::FutureExt",
-    "futures::StreamExt",
-    "itertools::Itertools",
-    "serde::Deserialize",
-    "serde::Serialize",
-    "std::convert::TryFrom",
-    "std::convert::TryInto",
-    "std::io::BufRead",
-    "std::io::Read",
-    "std::io::Write",
-    "std::iter::Iterator",
-    "tokio_stream::StreamExt",
-    "tracing::Instrument",
-]
-macro_traits = []
 macro_markers = []
 
 [doc-comment-coverage]

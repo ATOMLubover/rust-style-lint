@@ -117,6 +117,12 @@ def normalized_cfg(source: bytes, attr: tree_sitter.Node) -> str | None:
     return re.sub(r"\s+", "", value)
 
 
+def cfg_condition(source: bytes, node: tree_sitter.Node) -> tuple[str, ...]:
+    return tuple(
+        filter(None, (normalized_cfg(source, attr) for attr in leading_attributes(node)))
+    )
+
+
 def inside_tests_mod(node: tree_sitter.Node, source: bytes) -> bool:
     current = node.parent
 
@@ -233,7 +239,7 @@ def collect_uses(path: Path, source: bytes) -> list[UseStmt]:
             continue
 
         attrs = leading_attributes(node)
-        condition = tuple(filter(None, (normalized_cfg(source, attr) for attr in attrs)))
+        condition = cfg_condition(source, node)
         leaves, diagnostics = parse_tree(source, argument)
         lexical_tests_mod = inside_tests_mod(node, source)
         test_file = path.name == "tests.rs" or "tests" in path.parts
@@ -571,7 +577,15 @@ def check_mod_grouping(path: Path, root: Path, source: bytes) -> list[Violation]
                 if gap.strip():
                     continue
 
-                if gap.count(b"\n") != 0:
+                conditions_differ = cfg_condition(source, previous) != cfg_condition(source, current)
+                expected_newlines = 1 if conditions_differ else 0
+
+                if gap.count(b"\n") != expected_newlines:
+                    message = (
+                        "mod blocks with different cfg conditions must be separated by exactly one blank line"
+                        if conditions_differ
+                        else "mod declarations in the same block must be adjacent"
+                    )
                     violations.append(
                         violation(
                             path,
@@ -579,7 +593,7 @@ def check_mod_grouping(path: Path, root: Path, source: bytes) -> list[Violation]
                             source,
                             current.start_byte,
                             "USE_MOD_GROUP_BLANK_LINE",
-                            "mod declarations in the same block must be adjacent",
+                            message,
                         ),
                     )
 
@@ -649,6 +663,36 @@ def check_use_block_boundaries(
     return violations
 
 
+def check_use_cfg_boundaries(
+    path: Path,
+    root: Path,
+    source: bytes,
+    statements: list[UseStmt],
+) -> list[Violation]:
+    violations: list[Violation] = []
+
+    for block in contiguous_blocks(source, statements):
+        for previous, current in zip(block, block[1:]):
+            if previous.condition == current.condition:
+                continue
+
+            gap = source[previous.end : current.attr_start]
+
+            if gap.count(b"\n") != 2:
+                violations.append(
+                    violation(
+                        path,
+                        root,
+                        source,
+                        current.start,
+                        "USE_CFG_BLOCK_BLANK_LINE",
+                        "use blocks with different cfg conditions must be separated by exactly one blank line",
+                    ),
+                )
+
+    return violations
+
+
 def join_use_chunks(
     source: bytes,
     nodes: list[tree_sitter.Node],
@@ -677,10 +721,15 @@ def join_use_chunks(
             current = statements[node.start_byte]
             previous_categories = {category(leaf, local_crates) for leaf in previous.leaves}
             current_categories = {category(leaf, local_crates) for leaf in current.leaves}
-            # Different category groups need a blank line between them even
-            # when a #[cfg] condition splits them; the blank line is what
-            # stops rustfmt's reorder_imports from merging the groups.
-            separator = b"\n\n" if previous_categories != current_categories else b"\n"
+            # A category or cfg transition starts a new use block. The blank
+            # line also stops rustfmt's reorder_imports from merging it with
+            # the preceding block.
+            separator = (
+                b"\n\n"
+                if previous_categories != current_categories
+                or previous.condition != current.condition
+                else b"\n"
+            )
             chunks.append(separator)
 
         chunks.append(chunk)
@@ -689,12 +738,24 @@ def join_use_chunks(
 
 
 def join_mod_chunks(source: bytes, nodes: list[tree_sitter.Node]) -> bytes:
-    """Join mod declarations in one block: adjacent lines, preserving each
-    declaration's leading comments and attributes."""
-    return b"\n".join(
-        source[item_start(source, node):item_end(source, node)].strip(b"\r\n")
-        for node in nodes
-    )
+    """Join mods by cfg condition, preserving leading comments and attrs."""
+    chunks: list[bytes] = []
+
+    for index, node in enumerate(nodes):
+        if index:
+            previous = nodes[index - 1]
+            separator = (
+                b"\n\n"
+                if cfg_condition(source, previous) != cfg_condition(source, node)
+                else b"\n"
+            )
+            chunks.append(separator)
+
+        chunks.append(
+            source[item_start(source, node):item_end(source, node)].strip(b"\r\n")
+        )
+
+    return b"".join(chunks)
 
 
 def build_canonical_header(
@@ -913,6 +974,7 @@ def check_file(
                 violations.append(violation(path, root, source, statement.start, "USE_SUPER_OUTSIDE_TESTS", "`super` imports are only allowed inside mod tests"))
 
     violations.extend(check_use_block_boundaries(path, root, source, statements))
+    violations.extend(check_use_cfg_boundaries(path, root, source, statements))
     # Item order, grouping, and test-module structure are analyzed on the raw
     # source: production_source() masks #[cfg(test)] mod declarations, which
     # would hide exactly the declarations these checks must order.
@@ -1135,6 +1197,7 @@ def self_test() -> int:
         )
         _, edits = check_file(fixture, root, {root.name}, default_traits)
         apply_fixes(fixture, edits)
+        apply_structure_fixes(fixture, {root.name})
         fixed = fixture.read_text()
 
         if fixed.count("#[cfg(feature = \"a\")]") != 2 or fixed.count("use std::mem::take;") != 1:
@@ -1298,6 +1361,57 @@ def self_test() -> int:
 
         if diagnostics:
             print("self-test: visibility-block-fixed source still has diagnostics", file=sys.stderr)
+            print("\n".join(str(violation) for violation in diagnostics), file=sys.stderr)
+            return 1
+
+        fixture.write_text(
+            "#[cfg(all(feature = \"a\", feature = \"b\"))]\n"
+            "mod both;\n"
+            "#[cfg(feature = \"a\")]\n"
+            "mod a;\n"
+            "#[cfg(feature = \"a\")]\n"
+            "mod a_extra;\n"
+            "#[cfg(all(feature = \"a\", feature = \"b\"))]\n"
+            "use std::cmp::Ordering;\n"
+            "#[cfg(feature = \"a\")]\n"
+            "use std::mem::take;\n"
+            "#[cfg(feature = \"a\")]\n"
+            "use std::time::Duration;\n"
+            "\n"
+            "fn code() {}\n",
+        )
+        diagnostics, edits = check_file(fixture, root, {root.name}, default_traits)
+
+        if not any(
+            violation.code == "USE_MOD_GROUP_BLANK_LINE" for violation in diagnostics
+        ):
+            print("self-test: different mod cfg blocks were accepted without a blank line", file=sys.stderr)
+            return 1
+
+        if not any(
+            violation.code == "USE_CFG_BLOCK_BLANK_LINE" for violation in diagnostics
+        ):
+            print("self-test: different use cfg blocks were accepted without a blank line", file=sys.stderr)
+            return 1
+
+        apply_fixes(fixture, edits)
+        apply_structure_fixes(fixture, {root.name})
+        fixed = fixture.read_text()
+
+        if not (
+            "mod both;\n\n#[cfg(feature = \"a\")]\nmod a;" in fixed
+            and "mod a;\n#[cfg(feature = \"a\")]\nmod a_extra;" in fixed
+            and "use std::cmp::Ordering;\n\n#[cfg(feature = \"a\")]\nuse std::mem::take;" in fixed
+            and "use std::mem::take;\n#[cfg(feature = \"a\")]\nuse std::time::Duration;" in fixed
+        ):
+            print("self-test: cfg mod/use blocks were not separated canonically", file=sys.stderr)
+            print(fixed, file=sys.stderr)
+            return 1
+
+        diagnostics, _ = check_file(fixture, root, {root.name}, default_traits)
+
+        if diagnostics:
+            print("self-test: cfg-block-fixed source still has diagnostics", file=sys.stderr)
             print("\n".join(str(violation) for violation in diagnostics), file=sys.stderr)
             return 1
 
