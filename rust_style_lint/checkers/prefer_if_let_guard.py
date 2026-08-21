@@ -1,4 +1,4 @@
-"""Prefer `if let`/`let ... else` over matches with a single business arm.
+"""Prefer `if`/`if let`/`let ... else` over single-business matches.
 
 A match should express several business branches. When exactly one arm does
 real work and every other arm only bails out (`return`, `break`,
@@ -29,6 +29,19 @@ becomes:
 
     if let Some(x) = value {
         foo(x);
+    }
+
+A boolean match becomes a plain condition:
+
+    match created {
+        true => {},
+        false => update(),
+    }
+
+becomes:
+
+    if !created {
+        update();
     }
 
 The conversion is skipped whenever collapsing the guards into one `else`
@@ -223,7 +236,7 @@ def convertible(
     kinds: list[str],
     source: bytes,
 ) -> str | None:
-    """Return "if-let" or "let-else" when the match converts cleanly."""
+    """Return the clean conditional form when the match converts safely."""
 
     if len(arms) < 2 or "guarded" in kinds:
         return None
@@ -245,6 +258,14 @@ def convertible(
     guard_kinds = {kinds[i] for i in guards}
 
     if guard_kinds == {"empty"}:
+        patterns = [
+            node_text(source, arm.child_by_field_name("pattern")).strip()
+            for arm in arms
+        ]
+
+        if len(arms) == 2 and set(patterns) == {"true", "false"}:
+            return "if-bool"
+
         return "if-let"
 
     if guard_kinds == {"diverging"}:
@@ -254,6 +275,16 @@ def convertible(
             return "let-else"
 
     return None
+
+
+def boolean_condition(scrutinee: str, pattern: str) -> str:
+    if pattern == "true":
+        return scrutinee
+
+    if scrutinee.isidentifier():
+        return f"!{scrutinee}"
+
+    return f"!({scrutinee})"
 
 
 def violation_for(
@@ -269,6 +300,12 @@ def violation_for(
             f"match has a single business arm `{pattern}` and a diverging guard; "
             f"prefer `let {pattern} = {scrutinee} else {{ ... }}` over a match "
             "whose only other arms bail out"
+        )
+    elif kind == "if-bool":
+        condition = boolean_condition(scrutinee, pattern)
+        message = (
+            f"boolean match has a single business arm `{pattern}` and an empty "
+            f"opposite arm; prefer `if {condition} {{ ... }}`"
         )
     else:
         message = (

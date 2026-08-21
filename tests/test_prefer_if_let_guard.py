@@ -57,6 +57,52 @@ class PreferIfLetGuardTest(unittest.TestCase):
         self.assertEqual(len(found), 1)
         self.assertIn("if let Some(x) = value", found[0].message)
 
+    def test_false_business_arm_suggests_negated_if(self) -> None:
+        found = violations_for(
+            "pub async fn f(created: bool) {\n"
+            "    match created {\n"
+            "        //\n"
+            "        true => {}\n"
+            "\n"
+            "        false => {\n"
+            "            //\n"
+            "            update().await;\n"
+            "        }\n"
+            "    }\n"
+            "}\n"
+        )
+
+        self.assertEqual(len(found), 1)
+        self.assertIn("if !created", found[0].message)
+        self.assertNotIn("if let", found[0].message)
+
+    def test_true_business_arm_suggests_plain_if(self) -> None:
+        found = violations_for(
+            "pub fn f(created: bool) {\n"
+            "    match created {\n"
+            "        true => update(),\n"
+            "        false => {},\n"
+            "    }\n"
+            "}\n"
+        )
+
+        self.assertEqual(len(found), 1)
+        self.assertIn("if created", found[0].message)
+        self.assertNotIn("if let", found[0].message)
+
+    def test_negated_compound_boolean_keeps_precedence(self) -> None:
+        found = violations_for(
+            "pub fn f(a: bool, b: bool) {\n"
+            "    match a && b {\n"
+            "        true => {},\n"
+            "        false => update(),\n"
+            "    }\n"
+            "}\n"
+        )
+
+        self.assertEqual(len(found), 1)
+        self.assertIn("if !(a && b)", found[0].message)
+
     def test_comment_separators_are_not_arms(self) -> None:
         found = violations_for(
             "pub fn f(value: Option<u8>) {\n"

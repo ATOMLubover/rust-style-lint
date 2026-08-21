@@ -1,6 +1,6 @@
 # prefer-if-let-guard
 
-> 单个业务分支的 match 应该改写成 `if let` / `let ... else`。
+> 单个业务分支的 match 应该改写成 `if` / `if let` / `let ... else`。
 > 代码：`LET001` ｜ `--fix`：不支持（仅检测，建议手动改写）
 
 ## 目标
@@ -43,10 +43,24 @@ if let Some(x) = value {
 }
 ```
 
+布尔字面量的两臂 match 不使用 `if let true/false`，直接改成普通条件：
+
+```rust
+match created {
+    true => {},
+    false => update(),
+}
+
+if !created {
+    update();
+}
+```
+
 ## LET001 — 单业务分支 match
 
 > message（发散 guard）：`match has a single business arm `{pattern}` and a diverging guard; prefer `let {pattern} = {scrutinee} else {{ ... }}` over a match whose only other arms bail out`
 > message（空 guard）：`match has a single business arm `{pattern}` and only empty guard arms; prefer `if let {pattern} = {scrutinee} {{ ... }}``
+> message（布尔分支）：`boolean match has a single business arm `{pattern}` and an empty opposite arm; prefer `if {condition} {{ ... }}``
 > 例：`match has a single business arm `Some(x)` and a diverging guard; prefer `let Some(x) = value else { ... }` over a match whose only other arms bail out`
 
 ### 臂分类
@@ -70,7 +84,8 @@ if let Some(x) = value {
    若体引用了其中任意一个，跳过。
 4. 业务臂的 pattern 不是裸 `_`。
 5. 按 guard 分类决定改写方向：
-   - guard 全为 `empty` → `if-let`。
+   - guard 全为 `empty`，且恰好是 `true` / `false` 两臂 → `if condition`；业务臂为 `false` 时取反。
+   - 其他 guard 全为 `empty` → `if-let`。
    - guard 全为 `diverging` **且**所有 guard 体的文本完全相同 → `let-else`（能合并进同一个 else 块）。
    - 混合 `empty` + `diverging` → 不触发。
    - guard 发散方式不同（如一个 `return`、一个 `panic!`）→ 不触发。
