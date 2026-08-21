@@ -1,5 +1,5 @@
-"""Enforce custom Rust block-spacing rules: block-start separators, blank
-lines between direct statements, match arms, and enum variants."""
+"""Enforce custom Rust block-spacing rules: declaration/block-start
+separators and blank lines between statements, match arms, and variants."""
 
 from __future__ import annotations
 
@@ -119,6 +119,7 @@ class ContainerView:
     macro-body content, mirroring the node attributes that helper reads."""
 
     type: str
+    parent_type: str | None
     named_children: tuple[MappedNode, ...]
     children: tuple[object, ...]
 
@@ -291,19 +292,19 @@ class RustSpacingChecker:
         # it is required for every multi-unit block AND for a single unit
         # that itself spans several lines (e.g. a long `match` statement).
         # A `{` alone on its line is exempt; a compact single-line unit is
-        # exempt. A real comment before the first unit also separates
-        # visually, so it satisfies the rule. Struct declarations and
-        # struct literals never use the separator — their field lists are
-        # self-delimiting.
+        # exempt. In statement and match blocks, a real comment before the
+        # first unit also separates visually. Enum and struct declarations
+        # require the bare separator even when the first member is documented.
         first_unit_span_lines = units[0].start_point.row < units[0].end_point.row
         needs_separator = len(units) >= 2 or first_unit_span_lines
+        declaration_container = is_data_declaration_container(container)
 
         if (
             needs_separator
-            and container.type in BLOCK_CONTAINERS
+            and (container.type in BLOCK_CONTAINERS or declaration_container)
             and not line_is_only_open_brace(lines, brace)
             and not separator_rows
-            and not comment_rows
+            and (declaration_container or not comment_rows)
         ):
             kind = unit_kind(container)
             description = (
@@ -339,16 +340,16 @@ class RustSpacingChecker:
                 if edit is not None:
                     edits.append(edit)
 
-        # Struct declarations and struct literals must not carry a bare `//`
-        # separator: their field lists are self-delimiting and any separator
-        # between `{` and the first field is noise.
+        # Struct literals, union fields, and struct-like enum variant fields
+        # must not carry a bare `//` separator. Struct declarations are data
+        # declaration containers and follow BLK000 above instead.
         #
         # pub struct UserMessageBody {
         #     //
         #     pub content: String,
         # }
         if (
-            container.type in STRUCT_FIELD_CONTAINERS
+            forbids_field_separator(container)
             and separator_rows
         ):
             diagnostics.append(
@@ -358,9 +359,8 @@ class RustSpacingChecker:
                     column=1,
                     code="BLK002",
                     message=(
-                        "bare `//` separator is forbidden in struct "
-                        "declarations and struct literals; the field list "
-                        "needs no separator"
+                        "bare `//` separator is forbidden in this field "
+                        "list; fields here need no separator"
                     ),
                 ),
             )
@@ -376,8 +376,8 @@ class RustSpacingChecker:
                     )
                 )
 
-        # Remove separators from compact blocks: a single unit that fits on
-        # one line needs no bare `//` before it.
+        # Remove separators from compact blocks and data declarations: a
+        # single unit that fits on one line needs no bare `//` before it.
         #
         # if condition {
         #     //
@@ -386,19 +386,25 @@ class RustSpacingChecker:
         if (
             len(units) == 1
             and not first_unit_span_lines
-            and container.type in BLOCK_CONTAINERS
+            and (container.type in BLOCK_CONTAINERS or declaration_container)
             and separator_rows
         ):
+            message = (
+                "bare `//` block-start separator is redundant in a "
+                "single-statement block"
+                if container.type in BLOCK_CONTAINERS
+                else (
+                    "bare `//` declaration-start separator is redundant "
+                    f"before a single-line {unit_kind(container)}"
+                )
+            )
             diagnostics.append(
                 Violation(
                     path=self._relative(path),
                     line=separator_rows[0] + 1,
                     column=1,
                     code="BLK002",
-                    message=(
-                        "bare `//` block-start separator is redundant in a "
-                        "single-statement block"
-                    ),
+                    message=message,
                 ),
             )
 
@@ -731,6 +737,7 @@ class RustSpacingChecker:
         close = self._mapped_node(line_starts, tt_base, tt.children[-1], node_type="}")
         container = ContainerView(
             type="block",
+            parent_type=None,
             named_children=members,
             children=(brace, *members, close),
         )
@@ -775,6 +782,7 @@ class RustSpacingChecker:
         close = self._mapped_node(line_starts, base_byte, node.children[-1], node_type="}")
         container = ContainerView(
             type=node.type,
+            parent_type=node.parent.type if node.parent is not None else None,
             named_children=units,
             children=(brace, *units, close),
         )
@@ -820,6 +828,7 @@ class RustSpacingChecker:
             close = self._mapped_node(line_starts, tt_base, tt.children[-1], node_type="}")
             container = ContainerView(
                 type="match_block",
+                parent_type=None,
                 named_children=units,
                 children=(brace, *units, close),
             )
@@ -1053,6 +1062,35 @@ def unit_kind(container: Node) -> str:
         return "struct field"
 
     return "statement"
+
+
+def container_parent_type(container: Node | ContainerView) -> str | None:
+    if isinstance(container, ContainerView):
+        return container.parent_type
+
+    parent = container.parent
+
+    return parent.type if parent is not None else None
+
+
+def is_data_declaration_container(container: Node | ContainerView) -> bool:
+    parent_type = container_parent_type(container)
+
+    return (
+        container.type == "enum_variant_list" and parent_type == "enum_item"
+    ) or (
+        container.type == "field_declaration_list" and parent_type == "struct_item"
+    )
+
+
+def forbids_field_separator(container: Node | ContainerView) -> bool:
+    if container.type == "field_initializer_list":
+        return True
+
+    return (
+        container.type == "field_declaration_list"
+        and not is_data_declaration_container(container)
+    )
 
 
 def opening_brace(container: Node) -> Node | None:
