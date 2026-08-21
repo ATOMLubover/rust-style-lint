@@ -253,7 +253,11 @@ def has_comment(
             # comment, and does not satisfy the coverage rule.
             content = source[sibling.start_byte + 2 : sibling.end_byte].strip()
 
-            return prefix[:2] == b"//" and prefix != b"///" and bool(content)
+            return (
+                prefix[:2] == b"//"
+                and prefix not in (b"///", b"//!")
+                and bool(content)
+            )
 
         if sibling.type == "block_comment":
             prefix = source[sibling.start_byte : sibling.start_byte + 3]
@@ -464,6 +468,25 @@ def self_test() -> int:
         if len(violations) != 2:
             print(
                 f"self-test: expected 2 private-comment violations, got {len(violations)}",
+                file=sys.stderr,
+            )
+            print("\n".join(str(violation) for violation in violations), file=sys.stderr)
+            return 1
+
+        # ── inner doc comments document the enclosing module only ───
+
+        fixture.write_text(
+            "//! Documentation for the enclosing module.\n"
+            "\n"
+            "mod undocumented_private_mod;\n"
+        )
+
+        violations = check(root)
+
+        if len(violations) != 1:
+            print(
+                "self-test: inner doc comment satisfied a private item comment; "
+                f"got {len(violations)} violations",
                 file=sys.stderr,
             )
             print("\n".join(str(violation) for violation in violations), file=sys.stderr)
