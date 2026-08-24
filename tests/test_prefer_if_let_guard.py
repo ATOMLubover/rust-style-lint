@@ -57,6 +57,36 @@ class PreferIfLetGuardTest(unittest.TestCase):
         self.assertEqual(len(found), 1)
         self.assertIn("if let Some(x) = value", found[0].message)
 
+    def test_empty_opposite_of_diverging_arm_suggests_if_let(self) -> None:
+        found = violations_for(
+            "pub fn f(member_info: Option<MemberInfo>) {\n"
+            "    match member_info {\n"
+            "        //\n"
+            "        Some(member_info) => {\n"
+            "            return accept(UnitListAccessInfo::Member(member_info));\n"
+            "        }\n"
+            "\n"
+            "        None => {}\n"
+            "    }\n"
+            "}\n"
+        )
+
+        self.assertEqual(len(found), 1)
+        self.assertIn("if let Some(member_info) = member_info", found[0].message)
+
+    def test_empty_arm_before_diverging_arm_suggests_if_let(self) -> None:
+        found = violations_for(
+            "pub fn f(value: Option<u8>) {\n"
+            "    match value {\n"
+            "        None => {},\n"
+            "        Some(x) => return foo(x),\n"
+            "    }\n"
+            "}\n"
+        )
+
+        self.assertEqual(len(found), 1)
+        self.assertIn("if let Some(x) = value", found[0].message)
+
     def test_false_business_arm_suggests_negated_if(self) -> None:
         found = violations_for(
             "pub async fn f(created: bool) {\n"
@@ -150,6 +180,22 @@ class PreferIfLetGuardTest(unittest.TestCase):
         self.assertEqual(len(found), 1)
         self.assertIn("let Some(x) = value else", found[0].message)
 
+    def test_diverging_block_with_empty_opposite_suggests_if_let(self) -> None:
+        found = violations_for(
+            "pub fn f(value: Option<u8>) {\n"
+            "    match value {\n"
+            "        Some(x) => {\n"
+            "            warn(\"present\");\n"
+            "            return foo(x);\n"
+            "        },\n"
+            "        None => {},\n"
+            "    }\n"
+            "}\n"
+        )
+
+        self.assertEqual(len(found), 1)
+        self.assertIn("if let Some(x) = value", found[0].message)
+
     def test_macro_guard_diverges(self) -> None:
         found = violations_for(
             "pub fn f(value: Option<u8>) {\n"
@@ -161,6 +207,38 @@ class PreferIfLetGuardTest(unittest.TestCase):
         )
 
         self.assertEqual(len(found), 1)
+
+    def test_diverging_macro_with_empty_opposite_suggests_if_let(self) -> None:
+        found = violations_for(
+            "pub fn f(value: Option<u8>) {\n"
+            "    match value {\n"
+            "        Some(x) => unreachable!(),\n"
+            "        None => {},\n"
+            "    }\n"
+            "}\n"
+        )
+
+        self.assertEqual(len(found), 1)
+        self.assertIn("if let Some(x) = value", found[0].message)
+
+    def test_break_and_continue_with_empty_opposite_suggest_if_let(self) -> None:
+        found = violations_for(
+            "pub fn f(value: Option<u8>) {\n"
+            "    loop {\n"
+            "        match value {\n"
+            "            Some(x) => break,\n"
+            "            None => {},\n"
+            "        }\n"
+            "        match value {\n"
+            "            Some(x) => continue,\n"
+            "            None => {},\n"
+            "        }\n"
+            "    }\n"
+            "}\n"
+        )
+
+        self.assertEqual(len(found), 2)
+        self.assertTrue(all("if let Some(x) = value" in item.message for item in found))
 
     def test_identical_multi_guard_collapses(self) -> None:
         found = violations_for(
@@ -320,3 +398,21 @@ class PreferIfLetGuardTest(unittest.TestCase):
 
             found = check(root, {"diverging_macros": ["bail"]})
             self.assertEqual(len(found), 1)
+
+    def test_custom_diverging_macro_with_empty_opposite_suggests_if_let(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            src = root / "src"
+            src.mkdir()
+            (src / "fixture.rs").write_text(
+                "pub fn f(value: Option<u8>) {\n"
+                "    match value {\n"
+                "        Some(x) => bail!(),\n"
+                "        None => {},\n"
+                "    }\n"
+                "}\n"
+            )
+
+            found = check(root, {"diverging_macros": ["bail"]})
+            self.assertEqual(len(found), 1)
+            self.assertIn("if let Some(x) = value", found[0].message)

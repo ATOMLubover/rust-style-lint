@@ -7,7 +7,7 @@
 
 一个 match 应该表达多个业务分支。当恰好一个分支做实际工作、其余分支都只是退场
 （`return`、`break`、`continue`、发散宏、或空体）时，这个 match 其实是单路径分发，
-用 guard 读起来更清楚：
+用 guard 读起来更清楚。
 
 ```rust
 match value {
@@ -24,6 +24,21 @@ let Some(x) = value else {
 };
 
 foo(x);
+```
+
+如果恰好只有两个 arm，且一个 arm 发散、另一个 arm 为空，也应改成 `if let`：
+
+```rust
+match value {
+    Some(x) => {
+        return foo(x);
+    }
+    None => {}
+}
+
+if let Some(x) = value {
+    return foo(x);
+}
 ```
 
 guard 全是空体时改成 `if let`：
@@ -60,6 +75,7 @@ if !created {
 
 > message（发散 guard）：`match has a single business arm `{pattern}` and a diverging guard; prefer `let {pattern} = {scrutinee} else {{ ... }}` over a match whose only other arms bail out`
 > message（空 guard）：`match has a single business arm `{pattern}` and only empty guard arms; prefer `if let {pattern} = {scrutinee} {{ ... }}``
+> message（发散臂 + 空臂）：`match has a diverging arm `{pattern}` and an empty opposite arm; prefer `if let {pattern} = {scrutinee} {{ ... }}``
 > message（布尔分支）：`boolean match has a single business arm `{pattern}` and an empty opposite arm; prefer `if {condition} {{ ... }}``
 > 例：`match has a single business arm `Some(x)` and a diverging guard; prefer `let Some(x) = value else { ... }` over a match whose only other arms bail out`
 
@@ -77,17 +93,20 @@ if !created {
 ### 触发条件（全部满足）
 
 1. 臂数 ≥ 2，且没有 `guarded` 臂。
-2. 恰好 1 个 `business` 臂，且至少 1 个 guard 臂。
-3. 任一 guard 臂的体都没有引用其 pattern 引入的绑定（`guard_uses_pattern_binding`）。
+2. match 满足以下任一形态：
+   - 恰好 1 个 `business` 臂，且至少 1 个 guard 臂；
+   - 恰好 2 个臂，且一个是 `empty`、另一个是 `diverging`。
+3. 对第一种形态，任一 guard 臂的体都没有引用其 pattern 引入的绑定（`guard_uses_pattern_binding`）。
    `let ... else` 的 else 块无法命名匹配失败的值——比如 `Err(err) => return f(err)` 没有干净的 let-else 形式，跳过。
    检测法：pattern 里小写开头的 `identifier` 视为绑定（`None`/`Err` 这类单元变体是大写，不算），
    若体引用了其中任意一个，跳过。
-4. 业务臂的 pattern 不是裸 `_`。
+4. 要转换的臂 pattern 不是裸 `_`。
 5. 按 guard 分类决定改写方向：
    - guard 全为 `empty`，且恰好是 `true` / `false` 两臂 → `if condition`；业务臂为 `false` 时取反。
    - 其他 guard 全为 `empty` → `if-let`。
    - guard 全为 `diverging` **且**所有 guard 体的文本完全相同 → `let-else`（能合并进同一个 else 块）。
-   - 混合 `empty` + `diverging` → 不触发。
+   - 恰好两个臂且混合 `empty` + `diverging` → 以发散臂为目标改成 `if-let`。
+   - 多于两个臂且混合 `empty` + `diverging` → 不触发。
    - guard 发散方式不同（如一个 `return`、一个 `panic!`）→ 不触发。
 
 ### 违规（BAD）
@@ -133,6 +152,16 @@ pub fn f(value: Option<u8>) {
     match value {
         Some(x) => foo(x),
         None => unreachable!(),
+    }
+}
+
+// 发散臂 + 空臂 → if-let
+pub fn f(member_info: Option<MemberInfo>) {
+    match member_info {
+        Some(member_info) => {
+            return accept(UnitListAccessInfo::Member(member_info));
+        }
+        None => {}
     }
 }
 
@@ -188,7 +217,7 @@ match value {
     Err(err) => return err.len() as u8,
 }
 
-// 混合空 + 发散 guard
+// 多于两个臂的混合空 + 发散 guard
 match value {
     Some(x) => foo(x),
     None => {},

@@ -241,6 +241,18 @@ def convertible(
     if len(arms) < 2 or "guarded" in kinds:
         return None
 
+    if len(arms) == 2 and set(kinds) == {"empty", "diverging"}:
+        pattern = next(
+            arm.child_by_field_name("pattern")
+            for arm, kind in zip(arms, kinds)
+            if kind == "diverging"
+        )
+
+        if node_text(source, pattern).strip() == "_":
+            return None
+
+        return "if-let-diverging"
+
     business = [i for i, kind in enumerate(kinds) if kind == "business"]
     guards = [i for i, kind in enumerate(kinds) if kind != "business"]
 
@@ -301,6 +313,11 @@ def violation_for(
             f"prefer `let {pattern} = {scrutinee} else {{ ... }}` over a match "
             "whose only other arms bail out"
         )
+    elif kind == "if-let-diverging":
+        message = (
+            f"match has a diverging arm `{pattern}` and an empty opposite arm; "
+            f"prefer `if let {pattern} = {scrutinee} {{ ... }}`"
+        )
     elif kind == "if-bool":
         condition = boolean_condition(scrutinee, pattern)
         message = (
@@ -343,10 +360,11 @@ def check_file(path: Path, root: Path, macros: frozenset[str]) -> list[Violation
             kind = convertible(arms, kinds, source)
 
             if kind is not None:
-                business = next(
-                    index for index, arm_kind in enumerate(kinds) if arm_kind == "business"
+                target_kind = "diverging" if kind == "if-let-diverging" else "business"
+                target = next(
+                    index for index, arm_kind in enumerate(kinds) if arm_kind == target_kind
                 )
-                pattern = arms[business].child_by_field_name("pattern")
+                pattern = arms[target].child_by_field_name("pattern")
                 violations.append(
                     violation_for(
                         node,
@@ -421,6 +439,30 @@ def self_test() -> int:
 
         if "if let Some(x) = value" not in violations[0].message:
             print(f"self-test: wrong suggestion for empty guard: {violations[0].message}", file=sys.stderr)
+            return 1
+
+        # ── flagged: empty opposite of diverging arm ────────────────
+
+        fixture.write_text(
+            "pub fn f(member_info: Option<MemberInfo>) {\n"
+            "    match member_info {\n"
+            "        //\n"
+            "        Some(member_info) => {\n"
+            "            return accept(UnitListAccessInfo::Member(member_info));\n"
+            "        }\n"
+            "\n"
+            "        None => {}\n"
+            "    }\n"
+            "}\n",
+        )
+        violations = check(root)
+
+        if len(violations) != 1:
+            print(f"self-test: mixed empty/diverging match not flagged; got {len(violations)}", file=sys.stderr)
+            return 1
+
+        if "if let Some(member_info) = member_info" not in violations[0].message:
+            print(f"self-test: wrong suggestion for mixed match: {violations[0].message}", file=sys.stderr)
             return 1
 
         # ── flagged: unit-expression guard counts as empty ───────────
