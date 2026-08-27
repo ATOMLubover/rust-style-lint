@@ -47,7 +47,7 @@ panic!("err: {errno}", errno);               // {errno}
 format!(r#"raw {n}"#, n = 1);                // 原始字符串同样查
 ```
 
-> message：`format string uses inline capture '{name}'; pass arguments positionally: format!("... {}", name)`
+> message：`format string uses inline capture '{name}'; pass 'name' positionally to {实际宏名}!`
 >
 > 同一 format 字符串里每个不同的捕获名各报一次。
 
@@ -67,7 +67,8 @@ write!(get_writer(), "{}", w);               // writer 不是字面量，format 
 
 ## 配置
 
-`defaults.toml` 里的 `[no-inline-format].macros` 定义了哪些宏按 format 字符串处理
+`defaults.toml` 里的 `[no-inline-format].macros` 定义格式字符串位于第一参数的宏，
+`writer_macros` 定义 writer 位于第一参数、格式字符串位于第二参数的宏
 （`write!`/`writeln!` 取第二个实参，其余取第一个）：
 
 ```toml
@@ -80,9 +81,8 @@ macros = [
     "eprint",
     "eprintln",
     "panic",
-    "write",
-    "writeln",
 ]
+writer_macros = ["write", "writeln"]
 ```
 
 项目在 `rust-style-lint.toml` 里定义 `[no-inline-format]` 段会**整体替换**该表

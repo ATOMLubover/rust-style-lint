@@ -293,18 +293,18 @@ class RustSpacingChecker:
         # that itself spans several lines (e.g. a long `match` statement).
         # A `{` alone on its line is exempt; a compact single-line unit is
         # exempt. In statement and match blocks, a real comment before the
-        # first unit also separates visually. Enum and struct declarations
-        # require the bare separator even when the first member is documented.
+        # first unit also separates visually. Data declarations never use a
+        # block-start separator; BLK002 rejects one when present.
         first_unit_span_lines = units[0].start_point.row < units[0].end_point.row
         needs_separator = len(units) >= 2 or first_unit_span_lines
         declaration_container = is_data_declaration_container(container)
 
         if (
             needs_separator
-            and (container.type in BLOCK_CONTAINERS or declaration_container)
+            and container.type in BLOCK_CONTAINERS
             and not line_is_only_open_brace(lines, brace)
             and not separator_rows
-            and (declaration_container or not comment_rows)
+            and not comment_rows
         ):
             kind = unit_kind(container)
             description = (
@@ -340,28 +340,33 @@ class RustSpacingChecker:
                 if edit is not None:
                     edits.append(edit)
 
-        # Struct literals, union fields, and struct-like enum variant fields
-        # must not carry a bare `//` separator. Struct declarations are data
-        # declaration containers and follow BLK000 above instead.
+        # Struct/enum declarations, struct literals, union fields, and
+        # struct-like enum variant fields must not carry a bare `//` separator.
         #
         # pub struct UserMessageBody {
         #     //
         #     pub content: String,
         # }
         if (
-            forbids_field_separator(container)
+            forbids_start_separator(container)
             and separator_rows
         ):
+            message = (
+                "bare `//` separator is forbidden at the start of this "
+                "struct or enum declaration"
+                if declaration_container
+                else (
+                    "bare `//` separator is forbidden in this field "
+                    "list; fields here need no separator"
+                )
+            )
             diagnostics.append(
                 Violation(
                     path=self._relative(path),
                     line=separator_rows[0] + 1,
                     column=1,
                     code="BLK002",
-                    message=(
-                        "bare `//` separator is forbidden in this field "
-                        "list; fields here need no separator"
-                    ),
+                    message=message,
                 ),
             )
 
@@ -376,8 +381,8 @@ class RustSpacingChecker:
                     )
                 )
 
-        # Remove separators from compact blocks and data declarations: a
-        # single unit that fits on one line needs no bare `//` before it.
+        # Remove separators from compact blocks: a single unit that fits on
+        # one line needs no bare `//` before it.
         #
         # if condition {
         #     //
@@ -386,17 +391,12 @@ class RustSpacingChecker:
         if (
             len(units) == 1
             and not first_unit_span_lines
-            and (container.type in BLOCK_CONTAINERS or declaration_container)
+            and container.type in BLOCK_CONTAINERS
             and separator_rows
         ):
             message = (
                 "bare `//` block-start separator is redundant in a "
                 "single-statement block"
-                if container.type in BLOCK_CONTAINERS
-                else (
-                    "bare `//` declaration-start separator is redundant "
-                    f"before a single-line {unit_kind(container)}"
-                )
             )
             diagnostics.append(
                 Violation(
@@ -1083,14 +1083,11 @@ def is_data_declaration_container(container: Node | ContainerView) -> bool:
     )
 
 
-def forbids_field_separator(container: Node | ContainerView) -> bool:
-    if container.type == "field_initializer_list":
+def forbids_start_separator(container: Node | ContainerView) -> bool:
+    if container.type in {"field_initializer_list", "enum_variant_list"}:
         return True
 
-    return (
-        container.type == "field_declaration_list"
-        and not is_data_declaration_container(container)
-    )
+    return container.type == "field_declaration_list"
 
 
 def opening_brace(container: Node) -> Node | None:

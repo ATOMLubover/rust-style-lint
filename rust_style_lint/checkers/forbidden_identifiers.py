@@ -20,7 +20,8 @@ Rules
 
 Config
 ------
-``words`` merges extra forbidden segments into the default table.
+``words``, ``prefixes``, and ``contextual_word`` define all identifier rules.
+``allowed_modules`` exempts configured Rust modules and their descendants.
 ``skip_module_paths`` exempts files whose relative path contains any entry.
 ``ignore_files`` and ``exclude_filenames`` skip individual source files.
 """
@@ -123,9 +124,8 @@ def split_identifier(name: str) -> list[str]:
     return s.lower().split("_")
 
 
-def segments_contain_error(segments: list[str]) -> bool:
-    """Return True when *segments* contains ``error`` as a PascalCase word."""
-    return "error" in segments
+def segments_contain_word(segments: list[str], word: str) -> bool:
+    return word in segments
 
 
 def error_line(
@@ -140,6 +140,27 @@ def error_line(
         line=node.start_point.row + 1,
         code=code,
         message=message,
+    )
+
+
+def file_module(path: Path, root: Path) -> tuple[str, ...]:
+    relative = path.relative_to(root / "src")
+    parts = list(relative.with_suffix("").parts)
+
+    if parts[-1] in {"lib", "main", "mod"}:
+        parts.pop()
+
+    return tuple(parts)
+
+
+def format_module(module: tuple[str, ...]) -> str:
+    return "crate" if not module else "crate::" + "::".join(module)
+
+
+def module_is_allowed(module: str, allowed_modules: frozenset[str]) -> bool:
+    return any(
+        module == allowed or module.startswith(allowed + "::")
+        for allowed in allowed_modules
     )
 
 
@@ -273,15 +294,14 @@ def is_test_module_file(path: Path, test_module_set: set[Path]) -> bool:
 # Error-type detection for let bindings
 # ---------------------------------------------------------------------------
 
-def _type_node_contains_error(type_node: tree_sitter.Node, source: bytes) -> bool:
-    """Check whether a type annotation contains ``Error`` as a word segment."""
+def _type_node_contains_word(type_node: tree_sitter.Node, source: bytes, word: str) -> bool:
     name = text(source, type_node)
 
-    return segments_contain_error(split_identifier(name))
+    return segments_contain_word(split_identifier(name), word)
 
 
-def _expr_constructs_error(expr: tree_sitter.Node, source: bytes) -> bool:
-    """Return True when *expr* directly constructs an Error type.
+def _expr_constructs_type_word(expr: tree_sitter.Node, source: bytes, word: str) -> bool:
+    """Return True when *expr* directly constructs a type containing *word*.
 
     Checks the RHS expression of a let-binding at the surface level:
     struct literals, call targets, macro invocations, bare identifiers,
@@ -294,52 +314,52 @@ def _expr_constructs_error(expr: tree_sitter.Node, source: bytes) -> bool:
     if expr.type == "struct_expression":
         name_node = expr.child_by_field_name("name")
 
-        if name_node is not None and _type_node_contains_error(name_node, source):
+        if name_node is not None and _type_node_contains_word(name_node, source, word):
             return True
 
     if expr.type == "call_expression":
         func = expr.child_by_field_name("function")
 
-        if func is not None and _call_target_has_error(func, source):
+        if func is not None and _call_target_has_word(func, source, word):
             return True
 
     if expr.type == "field_expression":
         obj = expr.child_by_field_name("value")
 
-        if obj is not None and _expr_constructs_error(obj, source):
+        if obj is not None and _expr_constructs_type_word(obj, source, word):
             return True
 
     if expr.type == "macro_invocation":
         macro = expr.child_by_field_name("macro")
 
-        if macro is not None and _type_node_contains_error(macro, source):
+        if macro is not None and _type_node_contains_word(macro, source, word):
             return True
 
     # bare identifier (let e = SomeError;)
     if expr.type == "identifier":
-        if segments_contain_error(split_identifier(text(source, expr))):
+        if segments_contain_word(split_identifier(text(source, expr)), word):
             return True
 
     # scoped path (let e = std::io::Error;)
     if expr.type in ("scoped_identifier", "scoped_type_identifier"):
         parts = text(source, expr).split("::")
 
-        if any(segments_contain_error(split_identifier(p)) for p in parts):
+        if any(segments_contain_word(split_identifier(p), word) for p in parts):
             return True
 
     # --- one-level look into if / match / closure for Error constructors --
 
     if expr.type == "if_expression":
         for child in expr.named_children:
-            if child.type == "block" and _expr_constructs_error(child, source):
+            if child.type == "block" and _expr_constructs_type_word(child, source, word):
                 return True
-            if child.type == "else_clause" and _expr_constructs_error(child, source):
+            if child.type == "else_clause" and _expr_constructs_type_word(child, source, word):
                 return True
 
     if expr.type == "match_expression":
         body = expr.child_by_field_name("body")
 
-        if body is not None and _expr_constructs_error(body, source):
+        if body is not None and _expr_constructs_type_word(body, source, word):
             return True
 
     if expr.type == "match_block":
@@ -347,36 +367,36 @@ def _expr_constructs_error(expr: tree_sitter.Node, source: bytes) -> bool:
             if child.type == "match_arm":
                 value = child.child_by_field_name("value")
 
-                if value is not None and _expr_constructs_error(value, source):
+                if value is not None and _expr_constructs_type_word(value, source, word):
                     return True
 
     if expr.type == "closure_expression":
         body = expr.child_by_field_name("body")
 
-        if body is not None and _expr_constructs_error(body, source):
+        if body is not None and _expr_constructs_type_word(body, source, word):
             return True
 
     if expr.type == "block":
         for child in expr.named_children:
             if child.type == "expression_statement":
-                if _expr_constructs_error(child, source):
+                if _expr_constructs_type_word(child, source, word):
                     return True
             # direct expression in block (last expression)
             if child.type in (
                 "identifier", "scoped_identifier", "call_expression",
                 "struct_expression", "field_expression",
             ):
-                if _expr_constructs_error(child, source):
+                if _expr_constructs_type_word(child, source, word):
                     return True
 
     if expr.type == "else_clause":
         for child in expr.named_children:
-            if _expr_constructs_error(child, source):
+            if _expr_constructs_type_word(child, source, word):
                 return True
 
     if expr.type == "expression_statement":
         for child in expr.named_children:
-            if _expr_constructs_error(child, source):
+            if _expr_constructs_type_word(child, source, word):
                 return True
 
     return False
@@ -394,15 +414,13 @@ def _named_child_by_type(
     return None
 
 
-def _call_target_has_error(func_node: tree_sitter.Node, source: bytes) -> bool:
-    """Return True when a call expression's function target refers to an
-    Error type."""
+def _call_target_has_word(func_node: tree_sitter.Node, source: bytes, word: str) -> bool:
     if func_node.type in ("scoped_identifier", "scoped_type_identifier"):
         parts = text(source, func_node).split("::")
 
         # check all segments except the last (method / associated-fn name)
         for part in parts[:-1]:
-            if segments_contain_error(split_identifier(part)):
+            if segments_contain_word(split_identifier(part), word):
                 return True
 
         return False
@@ -413,29 +431,29 @@ def _call_target_has_error(func_node: tree_sitter.Node, source: bytes) -> bool:
         obj = func_node.child_by_field_name("value")
 
         if obj is not None:
-            return _expr_constructs_error(obj, source)
+            return _expr_constructs_type_word(obj, source, word)
 
         return False
 
     if func_node.type == "identifier":
-        return segments_contain_error(split_identifier(text(source, func_node)))
+        return segments_contain_word(split_identifier(text(source, func_node)), word)
 
     return False
 
 
-def let_binding_is_error_type(let_node: tree_sitter.Node, source: bytes) -> bool:
-    """Return True when *let_node* binds to an Error type.
+def let_binding_has_type_word(let_node: tree_sitter.Node, source: bytes, word: str) -> bool:
+    """Return True when *let_node* binds to a type containing *word*.
 
     Checks both the explicit type annotation and the initializer expression.
     """
     type_node = let_node.child_by_field_name("type")
 
-    if type_node is not None and _type_node_contains_error(type_node, source):
+    if type_node is not None and _type_node_contains_word(type_node, source, word):
         return True
 
     value = let_node.child_by_field_name("value")
 
-    if value is not None and _expr_constructs_error(value, source):
+    if value is not None and _expr_constructs_type_word(value, source, word):
         return True
 
     return False
@@ -465,119 +483,101 @@ def check_identifier_name(
     path: Path,
     root: Path,
     violations: list[Violation],
-    forbidden_segments: dict[str, tuple[str, str]],
+    module: str,
+    forbidden_segments: dict[str, dict],
+    prefixes: list[tuple[str, str, str, frozenset[str]]],
+    contextual_rule: dict,
 ) -> None:
     """Check a single identifier for forbidden word segments."""
 
-    # --- target_ prefix (FBD009) -----------------------------------------
-    # Skipped for type/field contexts — only "extension" (FBD010) is
-    # checked there.
-
-    if name.startswith("target_") and context not in (CTX_TYPE, CTX_FIELD):
-        violations.append(
-            error_line(
-                path, root, name_node,
-                "FBD009",
-                f"'{name}' starts with forbidden 'target_' prefix",
-            ),
-        )
-        return
+    for prefix, code, message, contexts in prefixes:
+        if name.startswith(prefix) and context in contexts:
+            violations.append(
+                error_line(
+                    path,
+                    root,
+                    name_node,
+                    code,
+                    message.format(name=name, prefix=prefix, context=context),
+                ),
+            )
+            return
 
     segments = split_identifier(name)
 
-    # Structured macro field keys are identifiers too, but their `err` form
-    # follows the established tracing field convention.  Only the forbidden
-    # `error` segment is checked here.
-    if context == CTX_MACRO_FIELD:
-        if "error" in segments:
-            violations.append(
-                error_line(
-                    path, root, name_node,
-                    "FBD003",
-                    f"'{name}' — 'error' is forbidden — use 'err' instead",
-                ),
-            )
-        return
+    word = str(contextual_rule.get("word", ""))
+    contexts = frozenset(str(value) for value in contextual_rule.get("contexts", []))
 
-    # --- error segment → always forbidden (FBD003) -----------------------
-    # Skipped for type names and field declarations — only "extension"
-    # (FBD010) is checked in those contexts.
-
-    if "error" in segments and context not in (CTX_TYPE, CTX_FIELD):
-        violations.append(
-            error_line(
-                path, root, name_node,
-                "FBD003",
-                f"'{name}' — 'error' is forbidden — use 'err' instead",
-            ),
-        )
-        return
-
-    # --- err segment → context-dependent (FBD004) ------------------------
-    # Skipped for type/field contexts — only "extension" (FBD010) is
-    # checked there.
-
-    if "err" in segments and context not in (CTX_TYPE, CTX_FIELD):
-        err_index = segments.index("err")
+    if word and word in segments and context in contexts:
+        word_index = segments.index(word)
         last = len(segments) - 1
+        code = str(contextual_rule["code"])
 
         if context == CTX_FUNCTION:
-            # only _err suffix is allowed (at least 2 segments, err last)
-            if err_index != last or len(segments) == 1:
+            allowed = contextual_rule.get("function_allowed_position")
+
+            if allowed != "suffix" or word_index != last or len(segments) == 1:
                 violations.append(
                     error_line(
                         path, root, name_node,
-                        "FBD004",
-                        f"'{name}' — 'err' in function names only allowed as '_err' suffix",
+                        code,
+                        str(contextual_rule["function_message"]).format(
+                            name=name, word=word, context=context,
+                        ),
                     ),
                 )
                 return
-            # _err suffix in function name → allowed
             return
 
         if context in (CTX_LET, CTX_PARAMETER):
-            # err_ prefix (≥2 segments, err first) allowed ONLY when NOT an Error type
-            if err_index == 0 and len(segments) >= 2 and not is_error_type:
+            allowed = contextual_rule.get("local_allowed_position")
+
+            if allowed == "prefix" and word_index == 0 and len(segments) >= 2 and not is_error_type:
                 return
-            # bare err or _err suffix or is_error_type → forbidden
-            msg = (
-                f"'{name}' — 'err' in local variables only allowed as 'err_' prefix "
-                f"on non-Error types; explicit Error instantiation is forbidden"
-            )
             violations.append(
-                error_line(path, root, name_node, "FBD004", msg),
+                error_line(
+                    path,
+                    root,
+                    name_node,
+                    code,
+                    str(contextual_rule["local_message"]).format(
+                        name=name, word=word, context=context,
+                    ),
+                ),
             )
             return
 
-        # const, static, enum_variant — err never allowed
         violations.append(
             error_line(
                 path, root, name_node,
-                "FBD004",
-                f"'{name}' — 'err' is forbidden in this context",
+                code,
+                str(contextual_rule["other_message"]).format(
+                    name=name, word=word, context=context,
+                ),
             ),
         )
         return
 
-    # --- other forbidden segments -----------------------------------------
-    # "extension" (FBD010) is the only segment checked in type and field
-    # contexts.  Every other forbidden segment is ignored for types/fields
-    # so that type re-exports, entity structs, and enum variant types are
-    # not spuriously flagged.
-
     for segment in segments:
         if segment in forbidden_segments:
-            if segment != "extension" and context in (CTX_TYPE, CTX_FIELD):
-                return
+            rule = forbidden_segments[segment]
+            contexts = rule["contexts"]
+            allowed_modules = rule["allowed_modules"]
 
-            code, message = forbidden_segments[segment]
-            violations.append(
-                error_line(
-                    path, root, name_node,
-                    code,
-                    f"'{name}' — {message}",
-                ),
-            )
+            if context in contexts and not module_is_allowed(module, allowed_modules):
+                replacement = rule["replacement"]
+                message = (
+                    f"'{name}' uses '{segment}'; use '{replacement}' instead"
+                    if replacement
+                    else f"'{name}' contains forbidden word '{segment}'"
+                )
+                violations.append(
+                    error_line(
+                        path, root, name_node,
+                        rule["code"],
+                        message,
+                    ),
+                )
             return
 
 
@@ -588,10 +588,18 @@ def check_identifier_name(
 def collect_definition_names(
     node: tree_sitter.Node,
     source: bytes,
-    names: list[tuple[str, tree_sitter.Node, str, bool]],
+    names: list[tuple[str, tree_sitter.Node, str, bool, tuple[str, ...]]],
+    error_type_word: str,
+    current_module: tuple[str, ...],
 ) -> None:
     """Walk *node* recursively and collect every user-defined identifier name
     together with its tree-sitter node, context tag, and Error-type flag."""
+
+    if node.type == "mod_item" and node.child_by_field_name("body") is not None:
+        name_node = node.child_by_field_name("name")
+
+        if name_node is not None:
+            current_module += (text(source, name_node),)
 
     # --- declaration `name` field ---
     if node.type in DECLARATION_KINDS:
@@ -616,13 +624,13 @@ def collect_definition_names(
             else:
                 ctx = CTX_LET  # unreachable
 
-            names.append((text(source, name_node), name_node, ctx, False))
+            names.append((text(source, name_node), name_node, ctx, False, current_module))
 
     # --- function / closure parameter ---
     if node.type == "parameter":
         for child in node.named_children:
             if child.type == "identifier":
-                names.append((text(source, child), child, CTX_PARAMETER, False))
+                names.append((text(source, child), child, CTX_PARAMETER, False, current_module))
                 break
 
     # --- structured macro field key ---
@@ -646,46 +654,63 @@ def collect_definition_names(
                     child.type == "identifier"
                     and next_child.text == b"="
                 ):
-                    names.append((text(source, child), child, CTX_MACRO_FIELD, False))
+                    names.append((text(source, child), child, CTX_MACRO_FIELD, False, current_module))
 
     # --- let binding (pattern → identifier, with Error-type detection) ---
     if node.type == "let_declaration":
         pattern = node.child_by_field_name("pattern")
 
         if pattern is not None:
-            is_err_type = let_binding_is_error_type(node, source)
-            _collect_pattern_identifiers(pattern, source, names, CTX_LET, is_err_type)
+            is_err_type = bool(error_type_word) and let_binding_has_type_word(
+                node,
+                source,
+                error_type_word,
+            )
+            _collect_pattern_identifiers(
+                pattern, source, names, CTX_LET, is_err_type, current_module,
+            )
 
     # --- for-loop variable ---
     if node.type == "for_expression":
         pattern = node.child_by_field_name("pattern")
 
         if pattern is not None:
-            _collect_pattern_identifiers(pattern, source, names, CTX_LET, False)
+            _collect_pattern_identifiers(
+                pattern, source, names, CTX_LET, False, current_module,
+            )
 
     # --- match arm binding ---
     if node.type == "match_pattern":
-        _collect_pattern_identifiers(node, source, names, CTX_LET, False)
+        _collect_pattern_identifiers(
+            node, source, names, CTX_LET, False, current_module,
+        )
 
     # recurse
     for child in node.named_children:
-        collect_definition_names(child, source, names)
+        collect_definition_names(
+            child, source, names, error_type_word, current_module,
+        )
 
 
 def _collect_pattern_identifiers(
     pattern: tree_sitter.Node,
     source: bytes,
-    names: list[tuple[str, tree_sitter.Node, str, bool]],
+    names: list[tuple[str, tree_sitter.Node, str, bool, tuple[str, ...]]],
     context: str,
     is_error_type: bool,
+    current_module: tuple[str, ...],
 ) -> None:
     if pattern.type == "identifier":
-        names.append((text(source, pattern), pattern, context, is_error_type))
+        names.append((
+            text(source, pattern), pattern, context, is_error_type, current_module,
+        ))
         return
 
     if pattern.type in ("tuple_pattern", "tuple_struct_pattern"):
         for child in pattern.named_children:
-            _collect_pattern_identifiers(child, source, names, context, is_error_type)
+            _collect_pattern_identifiers(
+                child, source, names, context, is_error_type, current_module,
+            )
         return
 
     if pattern.type == "struct_pattern":
@@ -694,24 +719,33 @@ def _collect_pattern_identifiers(
                 pattern_child = child.child_by_field_name("pattern")
 
                 if pattern_child is not None:
-                    _collect_pattern_identifiers(pattern_child, source, names, context, is_error_type)
+                    _collect_pattern_identifiers(
+                        pattern_child, source, names, context, is_error_type, current_module,
+                    )
                 else:
                     field_name = child.child_by_field_name("name")
 
                     if field_name is not None:
-                        names.append((text(source, field_name), field_name, context, is_error_type))
+                        names.append((
+                            text(source, field_name), field_name, context,
+                            is_error_type, current_module,
+                        ))
         return
 
     if pattern.type == "or_pattern":
         for child in pattern.named_children:
-            _collect_pattern_identifiers(child, source, names, context, is_error_type)
+            _collect_pattern_identifiers(
+                child, source, names, context, is_error_type, current_module,
+            )
         return
 
     if pattern.type in ("ref_pattern", "mutable_pattern"):
         sub = pattern.named_children[0] if pattern.named_children else None
 
         if sub is not None:
-            _collect_pattern_identifiers(sub, source, names, context, is_error_type)
+            _collect_pattern_identifiers(
+                sub, source, names, context, is_error_type, current_module,
+            )
         return
 
 
@@ -735,7 +769,10 @@ def check_file(
     path: Path,
     root: Path,
     test_module_set: set[Path],
-    forbidden_segments: dict[str, tuple[str, str]],
+    forbidden_segments: dict[str, dict],
+    prefixes: list[tuple[str, str, str, frozenset[str]]],
+    contextual_rule: dict,
+    allowed_modules: frozenset[str],
     config: dict,
 ) -> list[Violation]:
     source = production_source(path, root)
@@ -749,12 +786,24 @@ def check_file(
     if is_skipped_module_path(path, root, config):
         return violations
 
-    names: list[tuple[str, tree_sitter.Node, str, bool]] = []
+    names: list[tuple[str, tree_sitter.Node, str, bool, tuple[str, ...]]] = []
 
-    collect_definition_names(PARSER.parse(source).root_node, source, names)
+    error_type_word = str(contextual_rule.get("error_type_word", ""))
+    collect_definition_names(
+        PARSER.parse(source).root_node,
+        source,
+        names,
+        error_type_word,
+        file_module(path, root),
+    )
 
-    for name, name_node, context, is_error_type in names:
+    for name, name_node, context, is_error_type, module_parts in names:
         if inside_test_mod(name_node, source):
+            continue
+
+        module = format_module(module_parts)
+
+        if module_is_allowed(module, allowed_modules):
             continue
 
         check_identifier_name(
@@ -765,19 +814,43 @@ def check_file(
             path,
             root,
             violations,
+            module,
             forbidden_segments,
+            prefixes,
+            contextual_rule,
         )
 
     return violations
 
 
-def configured_segments(config: dict) -> dict[str, tuple[str, str]]:
-    segments: dict[str, tuple[str, str]] = {}
+def configured_segments(config: dict) -> dict[str, dict]:
+    segments: dict[str, dict] = {}
 
     for entry in config.get("words", []):
-        segments[str(entry["word"])] = (str(entry["code"]), str(entry["message"]))
+        segments[str(entry["word"])] = {
+            "code": str(entry["code"]),
+            "replacement": str(entry.get("replacement", "")),
+            "contexts": frozenset(
+                str(value) for value in entry.get("contexts", [])
+            ),
+            "allowed_modules": frozenset(
+                str(value) for value in entry.get("allowed_modules", [])
+            ),
+        }
 
     return segments
+
+
+def configured_prefixes(config: dict) -> list[tuple[str, str, str, frozenset[str]]]:
+    return [
+        (
+            str(entry["prefix"]),
+            str(entry["code"]),
+            str(entry["message"]),
+            frozenset(str(value) for value in entry.get("contexts", [])),
+        )
+        for entry in config.get("prefixes", [])
+    ]
 
 
 def check(root: Path, config: dict | None = None) -> list[Violation]:
@@ -797,11 +870,25 @@ def check(root: Path, config: dict | None = None) -> list[Violation]:
     ]
     test_module_set = _build_test_module_set(root, files)
     forbidden_segments = configured_segments(section)
+    prefixes = configured_prefixes(section)
+    contextual_rule = dict(section.get("contextual_word", {}))
+    allowed_modules = frozenset(
+        str(value) for value in section.get("allowed_modules", [])
+    )
 
     return [
         violation
         for path in files
-        for violation in check_file(path, root, test_module_set, forbidden_segments, section)
+        for violation in check_file(
+            path,
+            root,
+            test_module_set,
+            forbidden_segments,
+            prefixes,
+            contextual_rule,
+            allowed_modules,
+            section,
+        )
     ]
 
 
@@ -1186,13 +1273,15 @@ def self_test() -> int:
             "fn f9(extension: ()) {}\n"      # FBD010
             "fn f10(previous_value: ()) {}\n" # FBD011
             "fn f11(PreviousValue: ()) {}\n" # FBD011 via PascalCase
-            "fn f12(prev_value: ()) {}\n"    # allowed replacement
+            "fn f12(replacements: ()) {}\n" # FBD012
+            "fn f13(current: ()) {}\n"      # FBD013
+            "fn f14(prev_value: (), repl: (), curr: (), msg: ()) {}\n" # allowed replacements
         )
 
         violations = check(root)
         codes = {violation.code for violation in violations}
 
-        expected_codes = {f"FBD{i:03d}" for i in range(1, 12)}
+        expected_codes = {f"FBD{i:03d}" for i in range(1, 14)}
 
         if codes != expected_codes:
             missing = expected_codes - codes
@@ -1247,10 +1336,24 @@ def main() -> int:
     ]
     test_module_set = _build_test_module_set(root, files)
     forbidden_segments = configured_segments(section)
+    prefixes = configured_prefixes(section)
+    contextual_rule = dict(section.get("contextual_word", {}))
+    allowed_modules = frozenset(
+        str(value) for value in section.get("allowed_modules", [])
+    )
     violations = [
         violation
         for path in files
-        for violation in check_file(path, root, test_module_set, forbidden_segments, section)
+        for violation in check_file(
+            path,
+            root,
+            test_module_set,
+            forbidden_segments,
+            prefixes,
+            contextual_rule,
+            allowed_modules,
+            section,
+        )
     ]
 
     for violation in violations:

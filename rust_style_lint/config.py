@@ -26,10 +26,11 @@ def load_defaults() -> dict:
 def merged(name: str, config: dict | None) -> dict:
     """Return the effective config section for *name*.
 
-    The project section replaces the defaults entirely; an absent or empty
-    project section falls back to the packaged defaults.
+    The project section replaces the defaults entirely. Only ``None`` means
+    that the project section is absent; an explicitly empty section disables
+    every configured rule in that section.
     """
-    if config:
+    if config is not None:
         return config
 
     return dict(load_defaults().get(name, {}))

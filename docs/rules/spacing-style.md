@@ -7,9 +7,9 @@
 
 强制统一的排版：
 
-1. 多语句/多 match arm 的块，以及多成员 enum/struct 声明，起始 `{` 后必须有一个裸 `//` 分隔符。
+1. 多语句/多 match arm 的块，起始 `{` 后必须有一个裸 `//` 分隔符。
 2. 直接相邻的语句、match arm、enum variant 之间必须有空行。
-3. struct 字面量和非 struct 声明字段列表禁止裸 `//`；单单位紧凑块或声明里的裸 `//` 是冗余的。
+3. struct/enum 定义、struct 字面量和其他字段列表禁止以裸 `//` 开头；单单位紧凑块里的裸 `//` 是冗余的。
 4. 模块作用域内的项（struct/impl/trait/fn/mod/use/const/static/type/…）之间必须有空行。
 
 ## 裸 `//` 分隔符（bare separator）是什么
@@ -17,24 +17,23 @@
 匹配 `^\s*//\s*$` 的行——整行只有 `//`（可带前后空白）。纯视觉分割线。
 与之相对的是"真注释"（含实际文本的 `// 注释`）。
 
-函数和 match 块起始处的真注释可以满足 BLK000；enum/struct 声明始终要求真正的裸 `//`，
-`///` 或有内容的 `//` 不能替代。
+函数和 match 块起始处的真注释可以满足 BLK000。enum/struct 声明不应用 BLK000，
+并由 BLK002 禁止定义体开头出现裸 `//`。
 
 ## BLK000 — 块起始缺裸 `//` 分隔符
 
 > message：`{description} whose opening brace is not on its own line requires a bare // separator before its first {kind}`
 > `description` 取值：`multi-{kind} block`（≥2 个单位）或 `multi-line {kind} block`（单单位跨多行）
-> `kind` 取值：`statement`、`match arm`、`enum variant`、`struct field`
+> `kind` 取值：`statement`、`match arm`
 
 ### 触发条件
 
-容器是 `block`、`match_block`、enum 的 `enum_variant_list`，或父节点为 `struct_item` 的
-`field_declaration_list`，且：
+容器是 `block` 或 `match_block`，且：
 
 - `{` 不是单独独占一行；且
 - （单位数 ≥ 2 或 首个单位跨多行）；且
 - `{` 与首个单位之间没有裸 `//` 分隔符；且
-- 对函数/match 块，也没有真注释；enum/struct 声明不应用此豁免。
+- 没有真注释。
 
 ### 违规（BAD）
 
@@ -69,24 +68,11 @@ if condition {
 }
 ```
 
-enum/struct 声明即使首成员有文档注释，也必须在文档注释前保留裸分隔符：
-
-```rust
-struct Payload {
-    //
-    /// Stored payload content.
-    content: String,
-
-    size: usize,
-}
-```
-
 ### 豁免
 
 - `{` 单独独占一行（`if condition\n{`）——不需要分隔符。
 - 单语句且单行能放下的紧凑块——不强制。
-- 单成员、单行的 enum/struct 声明——不要求分隔符。
-- struct 字面量、union 和 enum 结构体 variant 内部字段列表——不要求分隔符。
+- 所有 enum/struct 定义及字段列表——不要求分隔符，并由 BLK002 禁止分隔符。
 
 ### --fix
 
@@ -153,12 +139,13 @@ fn example() {
 
 ## BLK002 — 冗余裸 `//` 分隔符
 
-### 变体一：不使用声明分隔符的字段列表
+### 变体一：禁止声明和字段列表的起始分隔符
 
 > message：`bare // separator is forbidden in this field list; fields here need no separator`
+> struct/enum 定义 message：`bare // separator is forbidden at the start of this struct or enum declaration`
 
-struct 字面量的 `field_initializer_list`，以及 union/enum 结构体 variant 的
-`field_declaration_list`，在 `{` 与首个字段之间存在裸 `//`。
+struct/enum 定义、struct 字面量、union 及 enum 结构体 variant 的字段列表，
+在 `{` 与首个成员之间存在裸 `//`。
 
 ```rust
 // BAD
@@ -182,8 +169,6 @@ let payload = Payload {
 > message：`bare // block-start separator is redundant in a single-statement block`
 
 `block` / `match_block` 恰好 1 个单位、单行、且 `{` 与单位之间有裸 `//`。
-单成员、单行的 enum/struct 声明同样触发；对应 message 为
-`bare // declaration-start separator is redundant before a single-line {kind}`。
 
 ```rust
 // BAD

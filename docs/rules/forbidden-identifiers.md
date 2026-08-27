@@ -1,7 +1,7 @@
 # forbidden-identifiers
 
 > 检测 Rust 标识符名里的禁用词。扫描 `src/` 下所有 Rust 源文件。
-> 代码：`FBD001`–`FBD011` ｜ `--fix`：不支持（仅检测）
+> 代码：`FBD001`–`FBD013` ｜ `--fix`：不支持（仅检测）
 
 ## 目标
 
@@ -25,6 +25,7 @@
 - `#[cfg(test)] mod <name>;` 声明的独立测试文件（及 `tests.rs`、路径含 `tests` 的文件）：整文件跳过。
 - `exclude_filenames`：basename 命中即排除。
 - `skip_module_paths`：相对路径包含任一字符串即跳过整文件。
+- `allowed_modules`：按 `crate::a::b` module 路径豁免该 module 及其所有子 module。
 - `ignore_files`：解析后的绝对路径命中即跳过。
 
 ---
@@ -33,7 +34,7 @@
 
 ### FBD001 — 禁用词 `result`
 
-> message：`'{name}' — 'result' is forbidden — name what the value represents`
+> message：`'{name}' contains forbidden word 'result'`
 
 段含 `result`，且上下文非 type/field。
 
@@ -47,7 +48,7 @@ let prev_value = 1;
 
 ### FBD002 — 禁用缩写 `res`
 
-> message：`'{name}' — 'res' is a forbidden abbreviation of 'result'`
+> message：`'{name}' contains forbidden word 'res'`
 
 段含 `res`，上下文非 type/field。
 
@@ -56,9 +57,9 @@ let prev_value = 1;
 fn compute_res() {}
 ```
 
-### FBD003 — `error` 永远禁用（硬编码，遮蔽 defaults 条目）
+### FBD003 — `error` 永远禁用（由 `words` 配置）
 
-> message：`'{name}' — 'error' is forbidden — use 'err' instead`
+> message：`'{name}' uses 'error'; use 'err' instead`
 
 段含 `error`，上下文非 type/field。此检查在 `err` 检查**之前**，命中即返回（不再查 FBD004 等）。
 `macro_field` 上下文**只**查 `error` 段——`result`/`res`/`err` 等不查。
@@ -86,7 +87,7 @@ fn process() {
 }
 ```
 
-### FBD004 — `err` 形式按上下文受限（硬编码，不在 defaults.toml）
+### FBD004 — `err` 形式按上下文受限（由 `contextual_word` 配置）
 
 > message（函数名）：`'{name}' — 'err' in function names only allowed as '_err' suffix`
 > message（let/参数）：`'{name}' — 'err' in local variables only allowed as 'err_' prefix on non-Error types; explicit Error instantiation is forbidden`
@@ -134,7 +135,7 @@ static GLOBAL_ERR: u32 = 0;   // static
 
 ### FBD005 — 禁用词 `closure`
 
-> message：`'{name}' — 'closure' is a forbidden word`
+> message：`'{name}' contains forbidden word 'closure'`
 
 段含 `closure`，上下文非 type/field。
 
@@ -145,7 +146,7 @@ fn get_closure() {}
 
 ### FBD006 — 禁用词 `connection`
 
-> message：`'{name}' — 'connection' is forbidden — use 'conn'`
+> message：`'{name}' uses 'connection'; use 'conn' instead`
 
 段含 `connection`，上下文非 type/field。
 
@@ -161,7 +162,7 @@ pub struct ConnInfo {
 
 ### FBD007 — 禁用缩写 `txn`
 
-> message：`'{name}' — 'txn' is a forbidden abbreviation of 'transaction'`
+> message：`'{name}' contains forbidden word 'txn'`
 
 段含 `txn`，上下文非 type/field。
 
@@ -172,7 +173,7 @@ fn begin_txn() {}
 
 ### FBD008 — 禁用缩写 `tx`
 
-> message：`'{name}' — 'tx' is a forbidden abbreviation of 'transaction'`
+> message：`'{name}' contains forbidden word 'tx'`
 
 段含 `tx`，上下文非 type/field。
 
@@ -181,7 +182,7 @@ fn begin_txn() {}
 fn commit_tx() {}
 ```
 
-### FBD009 — 禁用 `target_` 前缀（硬编码）
+### FBD009 — 禁用 `target_` 前缀（由 `prefixes` 配置）
 
 > message：`'{name}' starts with forbidden 'target_' prefix`
 
@@ -196,7 +197,7 @@ static target_x: u8 = 0;
 
 ### FBD010 — 禁用词 `extension`
 
-> message：`'{name}' — 'extension' is forbidden — use 'ext' instead`
+> message：`'{name}' uses 'extension'; use 'ext' instead`
 
 段含 `extension`。**这是唯一在 type 和 field 上下文也检查的默认词**——其他词对类型/字段静默。
 所以 `struct ExtensionHandler`、`field file_extension` 也会报。
@@ -209,7 +210,7 @@ struct ExtensionHandler;   // 也报
 
 ### FBD011 — 禁用词 `previous`
 
-> message：`'{name}' — 'previous' is forbidden — use 'prev' instead`
+> message：`'{name}' uses 'previous'; use 'prev' instead`
 
 段含 `previous`，上下文非 type/field。PascalCase 也查：`PreviousValue` → `["previous", "value"]`。
 
@@ -222,6 +223,14 @@ fn f11(PreviousValue: ()) {}   // PascalCase 也报
 // GOOD
 fn read_prev() {}
 ```
+
+### FBD012 — `replacements` 应缩写为 `repl`
+
+> message：`'{name}' uses 'replacements'; use 'repl' instead`
+
+### FBD013 — `current` 应缩写为 `curr`
+
+> message：`'{name}' uses 'current'; use 'curr' instead`
 
 ## 全 code 覆盖验证（self-test 断言）
 
@@ -238,18 +247,27 @@ static target_x: u8 = 0;      // FBD009
 fn f9(extension: ()) {}       // FBD010
 fn f10(previous_value: ()) {} // FBD011
 fn f11(PreviousValue: ()) {}  // FBD011（PascalCase）
-fn f12(prev_value: ()) {}     // 允许的替代
+fn f12(replacements: ()) {}   // FBD012
+fn f13(current: ()) {}        // FBD013
+fn f14(prev_value: (), repl: (), curr: (), msg: ()) {} // 允许的替代
 ```
 
-预期：`{FBD001, FBD002, FBD003, FBD004, FBD005, FBD006, FBD007, FBD008, FBD009, FBD010, FBD011}`，共 12 处。
+预期覆盖 `FBD001` 至 `FBD013`；`FBD011` 因 snake_case/PascalCase 各一处，共 14 处。
 
 ## 配置
 
 | 键 | 说明 | 默认 |
 | --- | --- | --- |
-| `words` | 额外禁用段列表，每项含 `word` / `code` / `message`，合并进默认表 | 见 `defaults.toml`：`result`(FBD001)、`res`(FBD002)、`error`(FBD003)、`closure`(FBD005)、`connection`(FBD006)、`txn`(FBD007)、`tx`(FBD008)、`extension`(FBD010)、`previous`(FBD011)。`err`(FBD004) 和 `target_`(FBD009) 是硬编码 |
+| `words` | 禁用段列表；每项包含 `word`、`code`、`replacement`、`contexts`，可选 `allowed_modules` | 见 `defaults.toml` |
+| `prefixes` | 禁用前缀列表；每项包含 `prefix`、`code`、`message`、`contexts`。消息支持 `{name}`、`{prefix}`、`{context}` | `target_`（FBD009） |
+| `contextual_word` | 按上下文限制位置的词，包含错误码、适用上下文、允许位置、Error 类型识别词及三类消息模板 | `err`（FBD004） |
+| `allowed_modules` | 全局豁免的 module 路径；同时豁免其子 module | `[]` |
 | `skip_module_paths` | 相对路径包含任一字符串即跳过整文件 | `[]` |
 | `ignore_files` | 解析后的绝对路径命中即跳过 | `[]` |
 | `exclude_filenames` | basename 命中即排除 | `["schema.rs"]` |
 
-`[forbidden-identifiers]` 段整段覆盖 defaults——定义完整词表，不是增量。
+`[forbidden-identifiers]` 段整段覆盖 defaults——定义完整规则，不是增量。显式空段会关闭该 checker 的全部配置规则。
+
+`replacement = ""` 表示该词本身禁止出现，诊断为
+`'{name}' contains forbidden word '{word}'`；非空表示该拼写不符合规范，诊断会给出建议写法。
+每条 word 的 `allowed_modules` 只豁免该词，全局 `allowed_modules` 则豁免 checker 的全部规则。

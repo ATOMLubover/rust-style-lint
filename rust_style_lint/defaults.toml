@@ -5,51 +5,90 @@
 
 [forbidden-identifiers]
 exclude_filenames = ["schema.rs"]
+allowed_modules = []
 
 [[forbidden-identifiers.words]]
 word = "result"
 code = "FBD001"
-message = "'result' is forbidden — name what the value represents"
+replacement = ""
+contexts = ["function", "let", "parameter", "const", "static", "enum_variant"]
 
 [[forbidden-identifiers.words]]
 word = "res"
 code = "FBD002"
-message = "'res' is a forbidden abbreviation of 'result'"
+replacement = ""
+contexts = ["function", "let", "parameter", "const", "static", "enum_variant"]
 
 [[forbidden-identifiers.words]]
 word = "error"
 code = "FBD003"
-message = "'error' is forbidden — use 'err' instead"
+replacement = "err"
+contexts = ["function", "let", "parameter", "const", "static", "enum_variant", "macro_field"]
 
 [[forbidden-identifiers.words]]
 word = "closure"
 code = "FBD005"
-message = "'closure' is a forbidden word"
+replacement = ""
+contexts = ["function", "let", "parameter", "const", "static", "enum_variant"]
 
 [[forbidden-identifiers.words]]
 word = "connection"
 code = "FBD006"
-message = "'connection' is forbidden — use 'conn'"
+replacement = "conn"
+contexts = ["function", "let", "parameter", "const", "static", "enum_variant"]
 
 [[forbidden-identifiers.words]]
 word = "txn"
 code = "FBD007"
-message = "'txn' is a forbidden abbreviation of 'transaction'"
+replacement = ""
+contexts = ["function", "let", "parameter", "const", "static", "enum_variant"]
 
 [[forbidden-identifiers.words]]
 word = "tx"
 code = "FBD008"
-message = "'tx' is a forbidden abbreviation of 'transaction'"
+replacement = ""
+contexts = ["function", "let", "parameter", "const", "static", "enum_variant"]
 
 [[forbidden-identifiers.words]]
 word = "extension"
 code = "FBD010"
-message = "'extension' is forbidden — use 'ext' instead"
+replacement = "ext"
+contexts = ["function", "let", "parameter", "const", "static", "enum_variant", "type", "field"]
 
 [[forbidden-identifiers.words]]
 word = "previous"
 code = "FBD011"
-message = "'previous' is forbidden — use 'prev' instead"
+replacement = "prev"
+contexts = ["function", "let", "parameter", "const", "static", "enum_variant"]
+
+[[forbidden-identifiers.words]]
+word = "replacements"
+code = "FBD012"
+replacement = "repl"
+contexts = ["function", "let", "parameter", "const", "static", "enum_variant"]
+
+[[forbidden-identifiers.words]]
+word = "current"
+code = "FBD013"
+replacement = "curr"
+contexts = ["function", "let", "parameter", "const", "static", "enum_variant"]
+
+[[forbidden-identifiers.prefixes]]
+prefix = "target_"
+code = "FBD009"
+message = "'{name}' starts with forbidden 'target_' prefix"
+contexts = ["function", "let", "parameter", "const", "static", "enum_variant", "macro_field"]
+
+[forbidden-identifiers.contextual_word]
+word = "err"
+error_type_word = "error"
+code = "FBD004"
+contexts = ["function", "let", "parameter", "const", "static", "enum_variant"]
+function_allowed_position = "suffix"
+local_allowed_position = "prefix"
+function_message = "'{name}' — 'err' in function names only allowed as '_err' suffix"
+local_message = "'{name}' — 'err' in local variables only allowed as 'err_' prefix on non-Error types; explicit Error instantiation is forbidden"
+other_message = "'{name}' — 'err' is forbidden in this context"
 
 [use-style]
 traits = [
@@ -94,9 +133,8 @@ macros = [
     "eprint",
     "eprintln",
     "panic",
-    "write",
-    "writeln",
 ]
+writer_macros = ["write", "writeln"]
 
 [prefer-if-let-guard]
 # Macros whose invocation unconditionally diverges, so a match arm calling

@@ -91,12 +91,11 @@ class RustSpacingCheckerTest(unittest.TestCase):
 
         self.assertEqual(
             [diagnostic.code for diagnostic in analysis.diagnostics],
-            ["BLK000", "BLK001"],
+            ["BLK001"],
         )
         self.assertEqual(
             fixed.decode(),
             """enum Payload {
-    //
     /// First payload.
     First,
 
@@ -106,7 +105,7 @@ class RustSpacingCheckerTest(unittest.TestCase):
 """,
         )
 
-    def test_struct_declaration_separator_is_required_and_preserved(self) -> None:
+    def test_struct_declaration_separator_is_forbidden_and_removed(self) -> None:
         missing = """struct Missing {
     /// First field.
     first: String,
@@ -118,12 +117,11 @@ class RustSpacingCheckerTest(unittest.TestCase):
 
         self.assertEqual(
             [diagnostic.code for diagnostic in missing_analysis.diagnostics],
-            ["BLK000"],
+            [],
         )
         self.assertEqual(
             missing_fixed.decode(),
             """struct Missing {
-    //
     /// First field.
     first: String,
     second: String,
@@ -142,9 +140,16 @@ class RustSpacingCheckerTest(unittest.TestCase):
 
         self.assertEqual(
             [diagnostic.code for diagnostic in analysis.diagnostics],
-            [],
+            ["BLK002"],
         )
-        self.assertEqual(fixed.decode(), source)
+        self.assertEqual(
+            fixed.decode(),
+            """struct Payload {
+    first: String,
+    second: String,
+}
+""",
+        )
 
     def test_single_member_declaration_separator_is_redundant(self) -> None:
         source = """enum Payload {
@@ -176,7 +181,7 @@ struct Item {
 """,
         )
 
-    def test_single_multiline_enum_variant_requires_separator(self) -> None:
+    def test_single_multiline_enum_variant_needs_no_separator(self) -> None:
         source = """enum Payload {
     Value {
         first: String,
@@ -189,12 +194,11 @@ struct Item {
 
         self.assertEqual(
             [diagnostic.code for diagnostic in analysis.diagnostics],
-            ["BLK000"],
+            [],
         )
         self.assertEqual(
             fixed.decode(),
             """enum Payload {
-    //
     Value {
         first: String,
         second: String,
@@ -282,7 +286,7 @@ struct Item {
             all(diagnostic.level == "warning" for diagnostic in analysis.diagnostics)
         )
 
-    def test_macro_struct_declaration_uses_parent_container_type(self) -> None:
+    def test_macro_struct_declaration_needs_no_separator(self) -> None:
         analysis = self.analyze(
             """declare! {
     //
@@ -295,17 +299,8 @@ struct Item {
             build_fixes=True,
         )
 
-        found = [
-            diagnostic
-            for diagnostic in analysis.diagnostics
-            if diagnostic.code == "BLK000" and diagnostic.line == 4
-        ]
-        self.assertEqual(len(found), 1)
-        self.assertEqual(found[0].level, "warning")
+        self.assertEqual(analysis.diagnostics, ())
         self.assertEqual(analysis.edits, ())
-        self.assertTrue(
-            all(diagnostic.level == "warning" for diagnostic in analysis.diagnostics)
-        )
 
     def test_macro_select_compliant_body_is_clean(self) -> None:
         analysis = self.analyze(
@@ -434,12 +429,11 @@ fn f() {
 
         self.assertEqual(
             [diagnostic.code for diagnostic in analysis.diagnostics],
-            ["BLK000", "BLK002", "BLK001"],
+            ["BLK002", "BLK001"],
         )
         self.assertEqual(
             fixed.decode(),
             """enum Payload {
-    //
     First {
         first: String,
         second: String,

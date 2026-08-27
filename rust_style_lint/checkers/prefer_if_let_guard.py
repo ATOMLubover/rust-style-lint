@@ -385,7 +385,7 @@ def check(root: Path, config: dict | None = None) -> list[Violation]:
     """Return single-business match violations under src/."""
     root = root.resolve()
     section = merged("prefer-if-let-guard", config)
-    macros = frozenset(section.get("diverging_macros", ["panic", "unreachable", "todo", "unimplemented"]))
+    macros = frozenset(section.get("diverging_macros", []))
 
     return [
         violation

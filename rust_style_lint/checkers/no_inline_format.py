@@ -22,22 +22,6 @@ from ..config import merged
 
 PARSER = tree_sitter.Parser(tree_sitter.Language(tree_sitter_rust.language()))
 
-# Format-like macros whose token tree carries the format string as the first
-# argument (write!/writeln! take a writer first, the format string second).
-DEFAULT_MACROS = frozenset(
-    {
-        "format",
-        "format_args",
-        "print",
-        "println",
-        "eprint",
-        "eprintln",
-        "panic",
-        "write",
-        "writeln",
-    }
-)
-
 _CAPTURE_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 
 
@@ -97,10 +81,21 @@ def named_captures(format_string: str) -> list[str]:
     return names
 
 
-def check_macro(node: tree_sitter.Node, source: bytes, path: Path, root: Path, macros: frozenset[str]) -> list[Violation]:
+def check_macro(
+    node: tree_sitter.Node,
+    source: bytes,
+    path: Path,
+    root: Path,
+    macro_slots: dict[str, int],
+) -> list[Violation]:
     name_node = node.child_by_field_name("macro")
 
-    if name_node is None or node_text(source, name_node) not in macros:
+    if name_node is None:
+        return []
+
+    macro_name = node_text(source, name_node)
+
+    if macro_name not in macro_slots:
         return []
 
     token_tree = next((child for child in node.children if child.type == "token_tree"), None)
@@ -108,12 +103,11 @@ def check_macro(node: tree_sitter.Node, source: bytes, path: Path, root: Path, m
     if token_tree is None:
         return []
 
-    # The format string is the first argument — or the second for write!/writeln!
-    # (the writer comes first). Only a literal at that exact slot is the format
-    # string; anything else (a variable, a concat! call, …) is skipped, and a
-    # string literal further back is a data argument, not the format string.
+    # The configured slot identifies the format-string argument. Only a literal
+    # at that exact slot is checked; a variable or nested macro is skipped, and
+    # later string literals are data arguments rather than format strings.
     arguments = token_tree.named_children
-    slot = 1 if node_text(source, name_node) in {"write", "writeln"} else 0
+    slot = macro_slots[macro_name]
 
     if slot >= len(arguments) or arguments[slot].type not in {"string_literal", "raw_string_literal"}:
         return []
@@ -135,14 +129,14 @@ def check_macro(node: tree_sitter.Node, source: bytes, path: Path, root: Path, m
             code="FMT001",
             message=(
                 f"format string uses inline capture '{{{name}}}'; "
-                f"pass arguments positionally: format!(\"... {{}}\", {name})"
+                f"pass '{name}' positionally to {macro_name}!"
             ),
         )
         for name in dict.fromkeys(captures)
     ]
 
 
-def check_file(path: Path, root: Path, macros: frozenset[str]) -> list[Violation]:
+def check_file(path: Path, root: Path, macro_slots: dict[str, int]) -> list[Violation]:
     source = path.read_bytes()
     tree = PARSER.parse(source)
     violations: list[Violation] = []
@@ -152,7 +146,7 @@ def check_file(path: Path, root: Path, macros: frozenset[str]) -> list[Violation
         node = pending.pop()
 
         if node.type == "macro_invocation":
-            violations.extend(check_macro(node, source, path, root, macros))
+            violations.extend(check_macro(node, source, path, root, macro_slots))
 
         pending.extend(reversed(node.named_children))
 
@@ -162,12 +156,15 @@ def check_file(path: Path, root: Path, macros: frozenset[str]) -> list[Violation
 def check(root: Path, config: dict | None = None) -> list[Violation]:
     """Return violations for every inline capture in format strings under src/."""
     section = merged("no-inline-format", config)
-    macros = frozenset(section.get("macros", DEFAULT_MACROS))
+    macro_slots = {
+        **{str(name): 0 for name in section.get("macros", [])},
+        **{str(name): 1 for name in section.get("writer_macros", [])},
+    }
 
     return [
         violation
         for path in rust_files(root)
-        for violation in check_file(path, root, macros)
+        for violation in check_file(path, root, macro_slots)
     ]
 
 
