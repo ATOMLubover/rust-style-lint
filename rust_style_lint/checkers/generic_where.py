@@ -10,7 +10,7 @@ from pathlib import Path
 import tree_sitter
 import tree_sitter_rust
 
-from ..base import Violation
+from ..base import Violation, source_files
 from ..production_source import production_source
 
 
@@ -173,7 +173,7 @@ def check(root: Path, config: dict | None = None) -> list[Violation]:
     """Return violations for non-canonical generic bounds and where clauses."""
     return [
         violation
-        for path in sorted((root / "src").rglob("*.rs"))
+        for path in source_files(root)
         if not excluded(path, root, config)
         for violation in check_file(path, root)
     ]

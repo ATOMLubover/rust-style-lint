@@ -11,7 +11,7 @@ from pathlib import Path
 import tree_sitter
 import tree_sitter_rust
 
-from ..base import Violation
+from ..base import Violation, crate_roots
 from ..config import merged
 
 
@@ -209,10 +209,11 @@ def excluded_path(path: Path, root: Path, config: dict) -> bool:
 
 
 def discover_production_files(
-    root: Path,
+    crate_root: Path,
+    project_root: Path,
     config: dict,
 ) -> tuple[list[Path], set[tuple[str, ...]]]:
-    src_dir = root / "src"
+    src_dir = crate_root / "src"
     paths = sorted(src_dir.rglob("*.rs")) if src_dir.is_dir() else []
     files_by_module: dict[tuple[str, ...], Path] = {}
 
@@ -235,7 +236,7 @@ def discover_production_files(
 
         scanned.add(path)
 
-        if excluded_path(path, root, config):
+        if excluded_path(path, project_root, config):
             continue
 
         source = path.read_bytes()
@@ -271,7 +272,7 @@ def discover_production_files(
     scan_paths = sorted(
         path
         for path in scanned
-        if not excluded_path(path, root, config)
+        if not excluded_path(path, project_root, config)
     )
 
     return scan_paths, prefixes
@@ -325,13 +326,14 @@ def configured_allowlist(config: dict) -> tuple[tuple[str, ...], ...]:
 def check_file(
     path: Path,
     root: Path,
+    src_dir: Path,
     prefixes: set[tuple[str, ...]],
     allowlist: tuple[tuple[str, ...], ...],
     rule: str,
 ) -> list[Violation]:
     source = path.read_bytes()
     tree = PARSER.parse(source)
-    base = file_module(root / "src", path)
+    base = file_module(src_dir, path)
     violations: list[Violation] = []
     pending = [tree.root_node]
 
@@ -388,14 +390,19 @@ def check(root: Path, config: dict | None = None) -> list[Violation]:
     section = merged("visibility-style", config)
     allowlist = configured_allowlist(section)
     rule = public_field_rule(allowlist)
-    paths, prefixes = discover_production_files(root, section)
+    violations: list[Violation] = []
 
-    return [
-        item
-        for path in paths
-        if not excluded_module(file_module(root / "src", path), prefixes)
-        for item in check_file(path, root, prefixes, allowlist, rule)
-    ]
+    for crate_root in crate_roots(root):
+        src_dir = crate_root / "src"
+        paths, prefixes = discover_production_files(crate_root, root, section)
+        violations.extend(
+            item
+            for path in paths
+            if not excluded_module(file_module(src_dir, path), prefixes)
+            for item in check_file(path, root, src_dir, prefixes, allowlist, rule)
+        )
+
+    return violations
 
 
 def diagnostic_codes(diagnostics: list[Violation]) -> list[str]:

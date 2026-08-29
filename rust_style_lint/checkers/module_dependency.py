@@ -13,7 +13,7 @@ from pathlib import Path
 import tree_sitter
 import tree_sitter_rust
 
-from ..base import Violation
+from ..base import Violation, crate_roots
 
 
 PATH_KINDS = {"scoped_identifier", "scoped_type_identifier"}
@@ -244,11 +244,12 @@ def excluded_path(path: Path, root: Path, config: dict | None) -> bool:
 
 
 def discover_crate(
-    root: Path,
+    crate_root: Path,
+    project_root: Path,
     config: dict | None,
 ) -> tuple[list[Path], set[tuple[str, ...]], set[tuple[str, ...]]]:
-    src_dir = root / "src"
-    paths = all_rust_files(root)
+    src_dir = crate_root / "src"
+    paths = all_rust_files(crate_root)
     files_by_module: dict[tuple[str, ...], Path] = {}
 
     for path in paths:
@@ -271,7 +272,7 @@ def discover_crate(
 
         scanned.add(path)
 
-        if excluded_path(path, root, config):
+        if excluded_path(path, project_root, config):
             continue
 
         source = path.read_bytes()
@@ -309,7 +310,7 @@ def discover_crate(
     scan_paths = sorted(
         path
         for path in scanned
-        if not excluded_path(path, root, config)
+        if not excluded_path(path, project_root, config)
     )
 
     return scan_paths, modules, prefixes
@@ -600,14 +601,14 @@ def edge_from_node(
 
 def collect_use_edges(
     path: Path,
-    root: Path,
+    src_dir: Path,
     source: bytes,
     tree: tree_sitter.Tree,
     modules: set[tuple[str, ...]],
     prefixes: set[tuple[str, ...]],
     crate_name: str | None,
 ) -> list[Edge]:
-    base = file_module(root / "src", path)
+    base = file_module(src_dir, path)
     top_modules = {module[0] for module in modules if module}
     edges: list[Edge] = []
     pending = [tree.root_node]
@@ -663,14 +664,14 @@ def outer_path_node(node: tree_sitter.Node) -> bool:
 
 def collect_qualified_edges(
     path: Path,
-    root: Path,
+    src_dir: Path,
     source: bytes,
     tree: tree_sitter.Tree,
     modules: set[tuple[str, ...]],
     prefixes: set[tuple[str, ...]],
     crate_name: str | None,
 ) -> list[Edge]:
-    base = file_module(root / "src", path)
+    base = file_module(src_dir, path)
     top_modules = {module[0] for module in modules if module}
     edges: list[Edge] = []
     pending = [tree.root_node]
@@ -717,14 +718,14 @@ def attribute_target(node: tree_sitter.Node) -> tree_sitter.Node | None:
 
 def collect_attribute_edges(
     path: Path,
-    root: Path,
+    src_dir: Path,
     source: bytes,
     tree: tree_sitter.Tree,
     modules: set[tuple[str, ...]],
     prefixes: set[tuple[str, ...]],
     crate_name: str | None,
 ) -> list[Edge]:
-    base = file_module(root / "src", path)
+    base = file_module(src_dir, path)
     top_modules = {module[0] for module in modules if module}
     edges: list[Edge] = []
     pending = [tree.root_node]
@@ -778,22 +779,23 @@ def deduplicate_edges(edges: list[Edge]) -> list[Edge]:
     )
 
 
-def collect_edges(root: Path, config: dict | None) -> list[Edge]:
-    paths, modules, prefixes = discover_crate(root, config)
-    crate_name = read_crate_name(root)
+def collect_edges(crate_root: Path, project_root: Path, config: dict | None) -> list[Edge]:
+    paths, modules, prefixes = discover_crate(crate_root, project_root, config)
+    crate_name = read_crate_name(crate_root)
+    src_dir = crate_root / "src"
     edges: list[Edge] = []
 
     for path in paths:
-        base = file_module(root / "src", path)
+        base = file_module(src_dir, path)
 
         if excluded_module(base, prefixes):
             continue
 
         source = path.read_bytes()
         tree = PARSER.parse(source)
-        edges.extend(collect_use_edges(path, root, source, tree, modules, prefixes, crate_name))
-        edges.extend(collect_qualified_edges(path, root, source, tree, modules, prefixes, crate_name))
-        edges.extend(collect_attribute_edges(path, root, source, tree, modules, prefixes, crate_name))
+        edges.extend(collect_use_edges(path, src_dir, source, tree, modules, prefixes, crate_name))
+        edges.extend(collect_qualified_edges(path, src_dir, source, tree, modules, prefixes, crate_name))
+        edges.extend(collect_attribute_edges(path, src_dir, source, tree, modules, prefixes, crate_name))
 
     return deduplicate_edges(edges)
 
@@ -885,15 +887,16 @@ def collect_module_definitions(
                 collect_module_definitions(source, inner, body, definitions)
 
 
-def duplicate_name_warnings(root: Path, config: dict | None) -> list[Violation]:
+def duplicate_name_warnings(crate_root: Path, project_root: Path, config: dict | None) -> list[Violation]:
     """Report same-named type aliases / structs / traits defined in two or more
     production modules as non-fatal warnings (a child shadowing a parent's name
     is a smell, but it compiles and must not fail the run)."""
-    paths, _, prefixes = discover_crate(root, config)
+    paths, _, prefixes = discover_crate(crate_root, project_root, config)
+    src_dir = crate_root / "src"
     by_name: dict[str, list[tuple[tuple[str, ...], Path, str, tree_sitter.Node, bytes]]] = {}
 
     for path in paths:
-        module = file_module(root / "src", path)
+        module = file_module(src_dir, path)
 
         if excluded_module(module, prefixes):
             continue
@@ -921,7 +924,7 @@ def duplicate_name_warnings(root: Path, config: dict | None) -> list[Violation]:
         for def_module, path, kind, node, source in definitions:
             warnings.append(
                 Violation(
-                    path=path.relative_to(root),
+                    path=path.relative_to(project_root),
                     line=node.start_point.row + 1,
                     column=node.start_point.column + 1,
                     code="MOD003",
@@ -937,37 +940,40 @@ def duplicate_name_warnings(root: Path, config: dict | None) -> list[Violation]:
 
 
 def check(root: Path, config: dict | None = None) -> list[Violation]:
-    """Return upward-dependency and cycle violations in src/."""
+    """Return upward-dependency and cycle violations in every crate."""
     root = root.resolve()
-    edges = collect_edges(root, config)
-    violations = [
-        edge_violation(
-            edge,
-            root,
-            "MOD001",
-            f"{format_module(edge.source)} must not depend only upward on strict ancestor {format_module(edge.target)}",
-        )
-        for edge in edges
-        if is_strict_ancestor(edge.target, edge.source)
-    ]
+    violations: list[Violation] = []
 
-    for component in strongly_connected_components(edges):
-        members = set(component)
-        description = ", ".join(format_module(module) for module in component)
-
+    for crate_root in crate_roots(root):
+        edges = collect_edges(crate_root, root, config)
         violations.extend(
             edge_violation(
                 edge,
                 root,
-                "MOD002",
-                f"cyclic module dependency {format_module(edge.source)} -> "
-                f"{format_module(edge.target)} in [{description}]",
+                "MOD001",
+                f"{format_module(edge.source)} must not depend only upward on strict ancestor {format_module(edge.target)}",
             )
             for edge in edges
-            if edge.source in members and edge.target in members
+            if is_strict_ancestor(edge.target, edge.source)
         )
 
-    violations.extend(duplicate_name_warnings(root, config))
+        for component in strongly_connected_components(edges):
+            members = set(component)
+            description = ", ".join(format_module(module) for module in component)
+
+            violations.extend(
+                edge_violation(
+                    edge,
+                    root,
+                    "MOD002",
+                    f"cyclic module dependency {format_module(edge.source)} -> "
+                    f"{format_module(edge.target)} in [{description}]",
+                )
+                for edge in edges
+                if edge.source in members and edge.target in members
+            )
+
+        violations.extend(duplicate_name_warnings(crate_root, root, config))
 
     return sorted(
         violations,

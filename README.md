@@ -68,6 +68,10 @@ use-style = true
 exclude_files = ["src/generated/schema.rs"]
 ```
 
+The project root may be a Cargo workspace. Every `src/` below it is scanned,
+including member crates such as `*-macro/` and `*-util/`; conventional
+`tests.rs` files and files below `src/tests/` are excluded.
+
 ### Configuration semantics
 
 Rule tables are data, not code. The package ships `defaults.toml` with every

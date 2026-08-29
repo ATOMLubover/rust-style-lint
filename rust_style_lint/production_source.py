@@ -9,6 +9,8 @@ from pathlib import Path
 import tree_sitter
 import tree_sitter_rust
 
+from .base import source_root
+
 
 PARSER = tree_sitter.Parser(tree_sitter.Language(tree_sitter_rust.language()))
 _CFG = re.compile(r"\s*#\s*\[\s*cfg\s*\((.*)\)\s*]\s*", re.DOTALL)
@@ -124,8 +126,8 @@ def _module_paths(path: Path, name: str) -> tuple[Path, ...]:
 
 
 @lru_cache(maxsize=None)
-def _test_module_files(root: Path) -> frozenset[Path]:
-    files = tuple((root / "src").rglob("*.rs"))
+def _test_module_files(src_dir: Path) -> frozenset[Path]:
+    files = tuple(src_dir.rglob("*.rs"))
     test_files = {path.resolve() for path in files if path.name == "tests.rs" or "tests" in path.parts}
 
     for path in files:
@@ -158,9 +160,9 @@ def production_source(path: Path, root: Path) -> bytes:
     """Mask modules unreachable when Rust compiles without `cfg(test)`."""
     source = path.read_bytes()
 
-    root = root.resolve()
+    src_dir = source_root(path, root)
 
-    if path.resolve() in _test_module_files(root):
+    if path.resolve() in _test_module_files(src_dir):
         return _mask(source, 0, len(source))
 
     tree = PARSER.parse(source)

@@ -13,7 +13,7 @@ from pathlib import Path
 from tree_sitter import Language, Node, Parser
 import tree_sitter_rust
 
-from ..base import Violation
+from ..base import Violation, source_files
 from ..config import merged
 from ..production_source import production_source
 
@@ -1501,7 +1501,11 @@ def check(root: Path, config: dict | None = None) -> list[Violation]:
     checker = RustSpacingChecker(root)
     diagnostics: list[Violation] = []
 
-    for path in iter_rs_files([root], ignore_dirs):
+    for path in (
+        path
+        for path in source_files(root)
+        if not any(part in ignore_dirs for part in path.relative_to(root).parts)
+    ):
         try:
             analysis = checker.analyze_file(path)
             diagnostics.extend(analysis.diagnostics)
@@ -1537,7 +1541,11 @@ def fix(root: Path, config: dict | None = None) -> list[Violation]:
     ignore_dirs = set(section.get("ignore_dirs", []))
     root = root.resolve()
     checker = RustSpacingChecker(root)
-    files = iter_rs_files([root], ignore_dirs)
+    files = [
+        path
+        for path in source_files(root)
+        if not any(part in ignore_dirs for part in path.relative_to(root).parts)
+    ]
     changed_files = 0
     applied_edits = 0
     skipped_parse_error_files = 0

@@ -16,7 +16,7 @@ from pathlib import Path
 import tree_sitter
 import tree_sitter_rust
 
-from ..base import Violation
+from ..base import Violation, source_files
 from ..config import merged
 
 
@@ -26,7 +26,7 @@ _CAPTURE_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 
 
 def rust_files(root: Path) -> list[Path]:
-    return sorted((root / "src").rglob("*.rs"))
+    return source_files(root)
 
 
 def node_text(source: bytes, node: tree_sitter.Node) -> str:

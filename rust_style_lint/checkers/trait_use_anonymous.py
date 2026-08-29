@@ -12,7 +12,7 @@ from pathlib import Path
 import tree_sitter
 import tree_sitter_rust
 
-from ..base import Violation
+from ..base import Violation, source_files
 from ..config import merged
 from ..production_source import production_source
 
@@ -29,13 +29,7 @@ class TraitImport:
 
 
 def rust_files(root: Path) -> list[Path]:
-    excluded = {".git", ".venv", "target", "node_modules"}
-
-    return sorted(
-        path
-        for path in root.rglob("*.rs")
-        if not any(part in excluded for part in path.parts)
-    )
+    return source_files(root)
 
 
 def node_text(source: bytes, node: tree_sitter.Node) -> str:

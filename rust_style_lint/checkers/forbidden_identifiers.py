@@ -37,7 +37,7 @@ from pathlib import Path
 import tree_sitter
 import tree_sitter_rust
 
-from ..base import Violation
+from ..base import Violation, source_files, source_root
 from ..config import merged
 from ..production_source import production_source
 
@@ -75,7 +75,7 @@ def rust_files(root: Path, config: dict) -> list[Path]:
 
     return sorted(
         path
-        for path in (root / "src").rglob("*.rs")
+        for path in source_files(root)
         if path.name not in exclude_filenames
     )
 
@@ -144,7 +144,7 @@ def error_line(
 
 
 def file_module(path: Path, root: Path) -> tuple[str, ...]:
-    relative = path.relative_to(root / "src")
+    relative = path.relative_to(source_root(path, root))
     parts = list(relative.with_suffix("").parts)
 
     if parts[-1] in {"lib", "main", "mod"}:

@@ -11,7 +11,7 @@ from pathlib import Path
 import tree_sitter
 import tree_sitter_rust
 
-from ..base import Violation
+from ..base import Violation, source_files
 from ..production_source import production_source
 
 
@@ -308,7 +308,7 @@ def check(root: Path, config: dict | None = None) -> list[Violation]:
     """Return declaration-ordering violations under src/."""
     violations: list[Violation] = []
 
-    for path in sorted((root / "src").rglob("*.rs")):
+    for path in source_files(root):
         if excluded(path, root, config):
             continue
 

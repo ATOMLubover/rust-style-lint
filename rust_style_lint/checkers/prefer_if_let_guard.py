@@ -59,7 +59,7 @@ from pathlib import Path
 import tree_sitter
 import tree_sitter_rust
 
-from ..base import Violation
+from ..base import Violation, source_files
 from ..config import merged
 from ..production_source import production_source
 
@@ -98,7 +98,7 @@ def excluded_path(path: Path, config: dict) -> bool:
 def rust_files(root: Path, config: dict) -> list[Path]:
     return sorted(
         path
-        for path in (root / "src").rglob("*.rs")
+        for path in source_files(root)
         if not excluded_path(path.relative_to(root), config)
     )
 

@@ -21,7 +21,7 @@ from pathlib import Path
 import tree_sitter
 import tree_sitter_rust
 
-from ..base import Violation
+from ..base import Violation, source_files
 from ..production_source import production_source
 
 
@@ -111,7 +111,7 @@ def rust_files(root: Path, paths: list[Path]) -> list[Path]:
 
         return sorted(set(files))
 
-    return sorted((root / "src").rglob("*.rs"))
+    return source_files(root)
 
 
 def check(root: Path, config: dict | None = None) -> list[Violation]:

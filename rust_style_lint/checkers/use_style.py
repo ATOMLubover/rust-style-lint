@@ -13,7 +13,7 @@ from pathlib import Path
 import tree_sitter
 import tree_sitter_rust
 
-from ..base import Violation
+from ..base import Violation, source_files
 from ..config import merged
 from ..production_source import production_source
 
@@ -1086,7 +1086,7 @@ def rust_files(root: Path, paths: list[Path]) -> list[Path]:
 
         return sorted(set(files))
 
-    return sorted((root / "src").rglob("*.rs"))
+    return source_files(root)
 
 
 def apply_fixes(path: Path, edits: list[tuple[int, int, bytes]]) -> None:

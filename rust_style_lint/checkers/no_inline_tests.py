@@ -11,14 +11,14 @@ from pathlib import Path
 import tree_sitter
 import tree_sitter_rust
 
-from ..base import Violation
+from ..base import Violation, source_files
 
 
 PARSER = tree_sitter.Parser(tree_sitter.Language(tree_sitter_rust.language()))
 
 
 def rust_files(root: Path) -> list[Path]:
-    return sorted((root / "src").rglob("*.rs"))
+    return source_files(root)
 
 
 def leading_attributes(node: tree_sitter.Node) -> list[tree_sitter.Node]:
