@@ -2,7 +2,7 @@
 
 > 要求泛型类型/生命周期约束必须写在 `where` 子句里；禁止参数位置的 `impl Trait`；
 > 同一个 `where` 子句不得拆分同一主体的约束。
-> 代码：`GEN001`（内联约束）、`GEN002`（参数位置 impl Trait）、`GEN003`（重复 where predicate）｜ `--fix`：不支持（仅检测）
+> 代码：`GEN001`（内联约束）、`GEN002`（参数位置 impl Trait）、`GEN003`（重复 where predicate）、`GEN004`（trait 定义处的 call-site 约束）｜ `--fix`：不支持（仅检测）
 
 ## 目标
 
@@ -10,6 +10,7 @@
 - 参数位置的 `impl Trait` 一律禁止——引入具名泛型参数，把约束放进 `where` 子句。
   返回值位置的 `impl Trait`（`-> impl Trait`）**允许**。
 - 同一个 `where` 子句中，同一约束主体只能出现一次；所有 bounds 必须合并。
+- `Clone`、`Send`、`Sync`、`'static` 不得由 trait 定义施加；调用方必须在 call site 自行约束。
 
 ## GEN001 — 泛型参数内联约束
 
@@ -108,6 +109,42 @@ where
     T: Copy,
     U: Send,
 {}
+```
+
+## GEN004 — trait 定义处的 call-site 约束
+
+> message：`trait {trait_name} constrains {bound}; move this bound to the call site`
+
+`Clone`、`Send`、`Sync`、`'static` 是调用方能力，而非 trait 本身的契约。它们不得出现在
+trait 的 supertrait、泛型参数、`where` 子句、关联类型或 trait method 声明中；每一个出现的
+bound 分别报一处 `GEN004`。trait 之外的函数、`impl` 等 call site 可以正常使用这些约束。
+
+### 违规（BAD）
+
+```rust
+trait Worker: Clone + Send + Sync + 'static {
+    type Item: Clone;
+
+    fn process<T: Send>(&self)
+    where
+        T: Sync;
+}
+```
+
+### 符合（GOOD）
+
+```rust
+trait Worker {
+    type Item;
+
+    fn process<T>(&self);
+}
+
+fn process_worker<T>(worker: &impl Worker)
+where
+    T: Clone + Send + Sync + 'static,
+{
+}
 ```
 
 ## 配置

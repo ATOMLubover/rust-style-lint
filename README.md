@@ -15,7 +15,7 @@ doc instead of the source when a rule flags your code:
 | --- | --- | --- |
 | `doc-comment-coverage` | DOC001 | [doc-comment-coverage.md](docs/rules/doc-comment-coverage.md) |
 | `forbidden-identifiers` | FBD001-011 | [forbidden-identifiers.md](docs/rules/forbidden-identifiers.md) |
-| `generic-where` | GEN001-003 | [generic-where.md](docs/rules/generic-where.md) |
+| `generic-where` | GEN001-004 | [generic-where.md](docs/rules/generic-where.md) |
 | `item-layout` | LAYOUT001-004 | [item-layout.md](docs/rules/item-layout.md) |
 | `module-dependency` | MOD001-002 | [module-dependency.md](docs/rules/module-dependency.md) |
 | `no-inline-format` | FMT001 | [no-inline-format.md](docs/rules/no-inline-format.md) |
@@ -38,7 +38,7 @@ doc instead of the source when a rule flags your code:
 | `no-inline-format` | FMT001 | no `{name}` inline captures in format strings — all args positional |
 | `spacing-style` | BLK000-003 | declaration/block-start `//`; blank lines between statements, arms, variants, and module items |
 | `use-style` | USE_\* | import grouping, merging, sorting, dedup; `as _` for known traits; `--fix` capable |
-| `generic-where` | GEN001-003 | canonical `where` bounds; no argument-position `impl Trait` |
+| `generic-where` | GEN001-004 | canonical `where` bounds; no argument-position `impl Trait`; call-site-only trait bounds |
 | `no-type-hint` | NO_TYPE_HINT | no `let x: T = …`; pin types with turbofish |
 | `no-unnamed-fields` | ENUM001 | forbid unnamed (tuple) fields in enum variants |
 | `item-layout` | LAYOUT001-004 | impl follows struct; pub before private; helpers in first-call order |

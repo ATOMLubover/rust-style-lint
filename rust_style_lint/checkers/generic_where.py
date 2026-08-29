@@ -25,6 +25,7 @@ DECLARATION_TYPES = {
     "union_item",
 }
 BOUND_PARAMETER_TYPES = {"lifetime_parameter", "type_parameter"}
+CALL_SITE_ONLY_TRAIT_BOUNDS = frozenset({"Clone", "Send", "Sync", "'static"})
 
 
 def node_text(source: bytes, node: tree_sitter.Node) -> str:
@@ -96,6 +97,29 @@ def repeated_where_predicates(
     return repeated
 
 
+def trait_definition_bounds(
+    trait: tree_sitter.Node,
+    source: bytes,
+) -> list[tree_sitter.Node]:
+    """Return call-site-only bounds declared anywhere in one trait item."""
+    forbidden: list[tree_sitter.Node] = []
+    pending = [trait]
+
+    while pending:
+        node = pending.pop()
+
+        if node.type == "trait_bounds":
+            forbidden.extend(
+                child
+                for child in node.named_children
+                if node_text(source, child) in CALL_SITE_ONLY_TRAIT_BOUNDS
+            )
+
+        pending.extend(reversed(node.named_children))
+
+    return forbidden
+
+
 def check_file(path: Path, root: Path) -> list[Violation]:
     source = production_source(path, root)
     tree = PARSER.parse(source)
@@ -123,6 +147,23 @@ def check_file(path: Path, root: Path) -> list[Violation]:
                             f"generic parameter {parameter_name} in "
                             f"{declaration_name(node, source)} uses an inline bound; "
                             "move the bound to a where clause"
+                        ),
+                    ),
+                )
+
+        if node.type == "trait_item":
+            name = declaration_name(node, source)
+
+            for bound in trait_definition_bounds(node, source):
+                bound_text = node_text(source, bound)
+                violations.append(
+                    Violation(
+                        path=path.relative_to(root),
+                        line=bound.start_point.row + 1,
+                        code="GEN004",
+                        message=(
+                            f"trait {name} constrains {bound_text}; move this "
+                            "bound to the call site"
                         ),
                     ),
                 )
@@ -207,6 +248,7 @@ def self_test() -> int:
             "struct BadStruct<T: Copy> {}\n"
             "enum BadEnum<T: Copy> {}\n"
             "trait BadTrait<T: Copy> {}\n"
+            "trait BadBounds: Clone + Send + Sync + 'static {}\n"
             "type BadAlias<T: Copy> = Vec<T>;\n"
             "union BadUnion<T: Copy> { value: T }\n"
             "fn bad_impl_trait(develop: &(impl EffectDevelop + Sync), other: impl Other) {}\n"
@@ -222,6 +264,7 @@ def self_test() -> int:
             codes.count("GEN001") != 9
             or codes.count("GEN002") != 2
             or codes.count("GEN003") != 1
+            or codes.count("GEN004") != 4
         ):
             print("self-test: inline generic syntax was not fully diagnosed", file=sys.stderr)
             print("\n".join(str(violation) for violation in violations), file=sys.stderr)

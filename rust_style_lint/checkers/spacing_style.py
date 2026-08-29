@@ -293,18 +293,18 @@ class RustSpacingChecker:
         # that itself spans several lines (e.g. a long `match` statement).
         # A `{` alone on its line is exempt; a compact single-line unit is
         # exempt. In statement and match blocks, a real comment before the
-        # first unit also separates visually. Data declarations never use a
-        # block-start separator; BLK002 rejects one when present.
+        # first unit also separates visually. Enum and struct declarations
+        # require the bare separator even when the first member is documented.
         first_unit_span_lines = units[0].start_point.row < units[0].end_point.row
         needs_separator = len(units) >= 2 or first_unit_span_lines
         declaration_container = is_data_declaration_container(container)
 
         if (
             needs_separator
-            and container.type in BLOCK_CONTAINERS
+            and (container.type in BLOCK_CONTAINERS or declaration_container)
             and not line_is_only_open_brace(lines, brace)
             and not separator_rows
-            and not comment_rows
+            and (declaration_container or not comment_rows)
         ):
             kind = unit_kind(container)
             description = (
@@ -340,15 +340,16 @@ class RustSpacingChecker:
                 if edit is not None:
                     edits.append(edit)
 
-        # Struct/enum declarations, struct literals, union fields, and
-        # struct-like enum variant fields must not carry a bare `//` separator.
+        # Struct literals, union fields, and struct-like enum variant fields
+        # must not carry a bare `//` separator. Struct declarations are data
+        # declaration containers and follow BLK000 above instead.
         #
         # pub struct UserMessageBody {
         #     //
         #     pub content: String,
         # }
         if (
-            forbids_start_separator(container)
+            forbids_field_separator(container)
             and separator_rows
         ):
             message = (
@@ -391,12 +392,17 @@ class RustSpacingChecker:
         if (
             len(units) == 1
             and not first_unit_span_lines
-            and container.type in BLOCK_CONTAINERS
+            and (container.type in BLOCK_CONTAINERS or declaration_container)
             and separator_rows
         ):
             message = (
                 "bare `//` block-start separator is redundant in a "
                 "single-statement block"
+                if container.type in BLOCK_CONTAINERS
+                else (
+                    "bare `//` declaration-start separator is redundant "
+                    f"before a single-line {unit_kind(container)}"
+                )
             )
             diagnostics.append(
                 Violation(
@@ -1083,11 +1089,14 @@ def is_data_declaration_container(container: Node | ContainerView) -> bool:
     )
 
 
-def forbids_start_separator(container: Node | ContainerView) -> bool:
-    if container.type in {"field_initializer_list", "enum_variant_list"}:
+def forbids_field_separator(container: Node | ContainerView) -> bool:
+    if container.type == "field_initializer_list":
         return True
 
-    return container.type == "field_declaration_list"
+    return (
+        container.type == "field_declaration_list"
+        and not is_data_declaration_container(container)
+    )
 
 
 def opening_brace(container: Node) -> Node | None:

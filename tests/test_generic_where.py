@@ -50,9 +50,9 @@ class GenericWhereTest(unittest.TestCase):
             "struct Struct<T> where T: Copy, T: Send { value: T }\n"
             "enum Enum<T> where T: Copy, T: Send { Value(T) }\n"
             "union Union<T> where T: Copy, T: Send { value: T }\n"
-            "trait Trait<T> where T: Copy, T: Send {}\n"
+            "trait Trait<T> where T: Copy, T: Sized {}\n"
             "type Alias<T> where T: Copy, T: Send = Vec<T>;\n"
-            "trait Associated { type Value<T> where T: Copy, T: Send; }\n"
+            "trait Associated { type Value<T> where T: Copy, T: Sized; }\n"
         )
 
         self.assertEqual(len(found), 7)
@@ -61,7 +61,7 @@ class GenericWhereTest(unittest.TestCase):
     def test_lifetime_and_complex_left_sides_are_checked(self) -> None:
         found = violations_for(
             "fn lifetime<'a>() where 'a: 'static, 'a: 'b {}\n"
-            "trait Complex<T> where T::Value: Copy, T::Value: Send {}\n"
+            "trait Complex<T> where T::Value: Copy, T::Value: Sized {}\n"
         )
 
         self.assertEqual(len(found), 2)
@@ -72,7 +72,43 @@ class GenericWhereTest(unittest.TestCase):
         found = violations_for(
             "fn merged<T>() where T: Copy + Send {}\n"
             "fn distinct<T, U>() where T: Copy, U: Send {}\n"
-            "trait Ranked<F> where for<'a> F: Fn(&'a str), F: Send {}\n"
+            "trait Ranked<F> where for<'a> F: Fn(&'a str), F: Sized {}\n"
+        )
+
+        self.assertEqual(found, [])
+
+    def test_trait_call_site_only_bounds_are_reported(self) -> None:
+        found = violations_for(
+            "trait Worker: Clone + Send + Sync + 'static {}\n"
+            "trait Storage<T: Clone>\n"
+            "where\n"
+            "    T: Send + Sync + 'static,\n"
+            "{\n"
+            "    type Value: Clone;\n"
+            "    fn process<U: Send>(&self) where U: Sync + 'static;\n"
+            "}\n"
+        )
+
+        trait_bound_violations = [
+            violation for violation in found if violation.code == "GEN004"
+        ]
+
+        self.assertEqual([violation.code for violation in trait_bound_violations], ["GEN004"] * 12)
+        self.assertEqual(
+            [violation.line for violation in trait_bound_violations],
+            [1, 1, 1, 1, 2, 4, 4, 4, 6, 7, 7, 7],
+        )
+        self.assertTrue(
+            all(
+                "move this bound to the call site" in violation.message
+                for violation in trait_bound_violations
+            )
+        )
+
+    def test_call_site_bounds_outside_traits_are_allowed(self) -> None:
+        found = violations_for(
+            "fn process<T>() where T: Clone + Send + Sync + 'static {}\n"
+            "impl<T> Worker for Service where T: Clone + Send + Sync + 'static {}\n"
         )
 
         self.assertEqual(found, [])
