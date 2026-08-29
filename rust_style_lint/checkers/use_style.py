@@ -1011,12 +1011,16 @@ def check_file(
             for previous, current in zip(segment, segment[1:]):
                 previous_categories = {category(leaf, local_crates) for leaf in previous.leaves}
                 current_categories = {category(leaf, local_crates) for leaf in current.leaves}
+                gap = source[previous.end : current.attr_start]
 
                 if previous_categories and current_categories and previous_categories != current_categories:
-                    gap = source[previous.end : current.attr_start]
-
                     if gap.count(b"\n") != 2:
                         violations.append(violation(path, root, source, current.start, "USE_GROUP_BLANK_LINE", "different use groups need exactly one blank line"))
+
+                    continue
+
+                if previous_categories and gap.count(b"\n") != 1:
+                    violations.append(violation(path, root, source, current.start, "USE_GROUP_BLANK_LINE", "use declarations in the same group must be adjacent"))
 
             canonical = canonicalize(aliased_leaves)
             raw_identities = [leaf.identity for leaf in aliased_leaves]
@@ -1413,6 +1417,31 @@ def self_test() -> int:
         if diagnostics:
             print("self-test: cfg-block-fixed source still has diagnostics", file=sys.stderr)
             print("\n".join(str(violation) for violation in diagnostics), file=sys.stderr)
+            return 1
+
+        fixture.write_text(
+            "#[cfg(feature = \"rdb_impl\")]\n"
+            "pub use poprako_obj_dept_macro::obj_dept;\n"
+            "\n"
+            "#[cfg(feature = \"rdb_impl\")]\n"
+            "pub use poprako_rdb_core::{RdbContext, RdbCore};\n",
+        )
+        local_crates = {"poprako_obj_dept_macro", "poprako_rdb_core"}
+        diagnostics, edits = check_file(fixture, root, local_crates, default_traits)
+
+        if not any(
+            violation.code == "USE_GROUP_BLANK_LINE"
+            and violation.message == "use declarations in the same group must be adjacent"
+            for violation in diagnostics
+        ):
+            print("self-test: same-cfg use group was accepted with a blank line", file=sys.stderr)
+            return 1
+
+        apply_fixes(fixture, edits)
+        apply_structure_fixes(fixture, local_crates)
+
+        if "obj_dept;\n#[cfg(feature = \"rdb_impl\")]" not in fixture.read_text():
+            print("self-test: same-cfg use group blank line was not removed", file=sys.stderr)
             return 1
 
         # A private mod and pub uses sitting between mod blocks must be

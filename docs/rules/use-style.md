@@ -275,11 +275,13 @@ use crate::local;
 
 **可 fix**（重渲染按 `CATEGORIES` 顺序重排）。
 
-### USE_GROUP_BLANK_LINE — 不同 use 组之间恰好一个空行
+### USE_GROUP_BLANK_LINE — use 组内紧邻、组间空一行
 
 > message：`different use groups need exactly one blank line`
+> message：`use declarations in the same group must be adjacent`
 
 同一段内两条连续 use 语句，类别集合不同（两边都非空），且两者之间字节间隙的换行数 ≠ 2（即不是恰好一个空行）。
+类别集合相同的连续 use 语句必须紧邻，不能插入空行；这也适用于带有相同 cfg 条件和属性的 use。
 
 ```rust
 // BAD
@@ -292,7 +294,22 @@ use std::io::Write;
 use crate::local::Thing;
 ```
 
-**可 fix**（重渲染时不同类别组间插 `\n\n`）。
+```rust
+// BAD —— 相同 cfg、相同组却被空行拆开
+#[cfg(feature = "rdb_impl")]
+pub use first_crate::First;
+
+#[cfg(feature = "rdb_impl")]
+pub use second_crate::Second;
+
+// GOOD
+#[cfg(feature = "rdb_impl")]
+pub use first_crate::First;
+#[cfg(feature = "rdb_impl")]
+pub use second_crate::Second;
+```
+
+**可 fix**（重渲染时同组用 `\n`，不同类别组间用 `\n\n`）。
 
 ### USE_CFG_BLOCK_BLANK_LINE — 不同 cfg 的 use 块之间恰好一个空行
 
