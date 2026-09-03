@@ -20,6 +20,7 @@ CHECKER_NAMES = (
     "use-style",
     "generic-where",
     "no-type-hint",
+    "no-redundant-destructure",
     "item-layout",
     "doc-comment-coverage",
     "forbidden-identifiers",

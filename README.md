@@ -20,6 +20,7 @@ doc instead of the source when a rule flags your code:
 | `module-dependency` | MOD001-002 | [module-dependency.md](docs/rules/module-dependency.md) |
 | `no-inline-format` | FMT001 | [no-inline-format.md](docs/rules/no-inline-format.md) |
 | `no-inline-tests` | TST001 | [no-inline-tests.md](docs/rules/no-inline-tests.md) |
+| `no-redundant-destructure` | DSTR001 | [no-redundant-destructure.md](docs/rules/no-redundant-destructure.md) |
 | `no-type-hint` | NO_TYPE_HINT | [no-type-hint.md](docs/rules/no-type-hint.md) |
 | `no-unnamed-fields` | ENUM001 | [no-unnamed-fields.md](docs/rules/no-unnamed-fields.md) |
 | `prefer-if-let-guard` | LET001 | [prefer-if-let-guard.md](docs/rules/prefer-if-let-guard.md) |
@@ -40,6 +41,7 @@ doc instead of the source when a rule flags your code:
 | `use-style` | USE_\* | import grouping, merging, sorting, dedup; `as _` for known traits; `--fix` capable |
 | `generic-where` | GEN001-004 | canonical `where` bounds; no argument-position `impl Trait`; call-site-only trait bounds |
 | `no-type-hint` | NO_TYPE_HINT | no `let x: T = …`; pin types with turbofish |
+| `no-redundant-destructure` | DSTR001 | destructure an expression directly instead of naming and immediately unpacking it |
 | `no-unnamed-fields` | ENUM001 | forbid unnamed (tuple) fields in enum variants |
 | `item-layout` | LAYOUT001-004 | impl follows struct; pub before private; helpers in first-call order |
 
