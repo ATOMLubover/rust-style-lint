@@ -37,7 +37,7 @@ doc instead of the source when a rule flags your code:
 | --- | --- | --- |
 | `no-inline-tests` | TST001 | `#[cfg(test)] mod tests { … }` must live in a separate `tests.rs` |
 | `no-inline-format` | FMT001 | no `{name}` inline captures in format strings — all args positional |
-| `spacing-style` | BLK000-003 | declaration/block-start `//`; blank lines between statements, arms, variants, and module items |
+| `spacing-style` | BLK000-003 | block-start `//`; forbid leading `//` in struct/enum declarations; blank lines between statements, arms, variants, and module items |
 | `use-style` | USE_\* | import grouping, merging, sorting, dedup; `as _` for known traits; `--fix` capable |
 | `generic-where` | GEN001-004 | canonical `where` bounds; no argument-position `impl Trait`; call-site-only trait bounds |
 | `no-type-hint` | NO_TYPE_HINT | no `let x: T = …`; pin types with turbofish |

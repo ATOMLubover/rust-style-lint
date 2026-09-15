@@ -1,15 +1,15 @@
 # spacing-style
 
-> 自定义 Rust 块间距规则：声明/块起始分隔符、语句/match arm/enum variant/模块项之间的空行。
+> 自定义 Rust 块间距规则：块起始分隔符、语句/match arm/enum variant/模块项之间的空行。
 > 代码：`BLK000`–`BLK003`、`PARSE001` ｜ `--fix`：BLK000/BLK001/BLK002/BLK003 支持
 
 ## 目标
 
 强制统一的排版：
 
-1. 多语句/多 match arm 的块，以及多成员 enum/struct 声明，起始 `{` 后必须有一个裸 `//` 分隔符。
+1. 多语句/多 match arm 的块，起始 `{` 后必须有一个裸 `//` 分隔符。
 2. 直接相邻的语句、match arm、enum variant 之间必须有空行。
-3. struct 字面量和非 struct 声明字段列表禁止裸 `//`；单单位紧凑块或声明里的裸 `//` 是冗余的。
+3. struct/enum 声明、struct 字面量和字段列表起始处禁止裸 `//`；单单位紧凑块里的裸 `//` 是冗余的。
 4. 模块作用域内的项（struct/impl/trait/fn/mod/use/const/static/type/…）之间必须有空行。
 
 ## 裸 `//` 分隔符（bare separator）是什么
@@ -17,24 +17,23 @@
 匹配 `^\s*//\s*$` 的行——整行只有 `//`（可带前后空白）。纯视觉分割线。
 与之相对的是"真注释"（含实际文本的 `// 注释`）。
 
-函数和 match 块起始处的真注释可以满足 BLK000；enum/struct 声明始终要求真正的裸 `//`，
-`///` 或有内容的 `//` 不能替代。
+函数和 match 块起始处的真注释可以满足 BLK000。struct/enum 声明起始处禁止裸 `//`，
+保留 `///` 或有内容的 `//`。
 
 ## BLK000 — 块起始缺裸 `//` 分隔符
 
 > message：`{description} whose opening brace is not on its own line requires a bare // separator before its first {kind}`
 > `description` 取值：`multi-{kind} block`（≥2 个单位）或 `multi-line {kind} block`（单单位跨多行）
-> `kind` 取值：`statement`、`match arm`、`enum variant`、`struct field`
+> `kind` 取值：`statement`、`match arm`
 
 ### 触发条件
 
-容器是 `block`、`match_block`、enum 的 `enum_variant_list`，或父节点为 `struct_item` 的
-`field_declaration_list`，且：
+容器是 `block` 或 `match_block`，且：
 
 - `{` 不是单独独占一行；且
 - （单位数 ≥ 2 或 首个单位跨多行）；且
 - `{` 与首个单位之间没有裸 `//` 分隔符；且
-- 对函数/match 块，也没有真注释；enum/struct 声明不应用此豁免。
+- 也没有真注释。
 
 ### 违规（BAD）
 
@@ -47,18 +46,6 @@ if condition {
 ```
 
 单单位跨多行同样要分隔符（如块内一个跨多行的 `match` 表达式）。
-
-enum/struct 声明即使首成员有文档注释，也必须在文档注释前保留裸分隔符：
-
-```rust
-struct Payload {
-    //
-    /// Stored payload content.
-    content: String,
-
-    size: usize,
-}
-```
 
 ### 符合（GOOD）
 
@@ -85,7 +72,7 @@ if condition {
 
 - `{` 单独独占一行（`if condition\n{`）——不需要分隔符。
 - 单语句且单行能放下的紧凑块——不强制。
-- 单成员、单行的 enum/struct 声明——不要求分隔符。
+- 所有 enum/struct 声明——禁止起始分隔符。
 - struct 字面量、union 和 enum 结构体 variant 内部字段列表——不要求分隔符。
 
 ### --fix
@@ -153,12 +140,14 @@ fn example() {
 
 ## BLK002 — 冗余裸 `//` 分隔符
 
-### 变体一：不使用声明分隔符的字段列表
+### 变体一：声明和字段列表起始处的分隔符
 
 > message：`bare // separator is forbidden in this field list; fields here need no separator`
 
-struct 字面量的 `field_initializer_list`，以及 union/enum 结构体 variant 的
-`field_declaration_list`，在 `{` 与首个字段之间存在裸 `//`。
+struct/enum 声明、struct 字面量的 `field_initializer_list`，以及 union/enum 结构体 variant 的
+`field_declaration_list`，在 `{` 与首个成员之间存在裸 `//`。无论成员数量、成员是否跨行、
+`{` 是否独占一行，均禁止。声明的 message 为
+`bare // separator is forbidden at the start of this struct or enum declaration`。
 
 ```rust
 // BAD

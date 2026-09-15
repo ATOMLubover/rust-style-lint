@@ -91,12 +91,11 @@ class RustSpacingCheckerTest(unittest.TestCase):
 
         self.assertEqual(
             [diagnostic.code for diagnostic in analysis.diagnostics],
-            ["BLK000", "BLK001"],
+            ["BLK001"],
         )
         self.assertEqual(
             fixed.decode(),
             """enum Payload {
-    //
     /// First payload.
     First,
 
@@ -106,48 +105,32 @@ class RustSpacingCheckerTest(unittest.TestCase):
 """,
         )
 
-    def test_struct_declaration_separator_is_required_and_preserved(self) -> None:
-        missing = """struct Missing {
-    /// First field.
-    first: String,
-    second: String,
-}
-"""
-        missing_analysis = self.analyze(missing, build_fixes=True)
-        missing_fixed = apply_edits(missing.encode(), missing_analysis.edits)
+    def test_declaration_separator_is_forbidden_and_removed(self) -> None:
+        for declaration, members in (
+            ("struct Payload", "    first: String,\n    second: String,"),
+            ("enum Payload", "    First,\n\n    Second,"),
+        ):
+            for brace in (" {", "\n{"):
+                with self.subTest(declaration=declaration, brace=brace):
+                    clean = (
+                        f"{declaration}{brace}\n"
+                        "    /// First member.\n"
+                        '    #[cfg(feature = "first")]\n'
+                        f"{members}\n}}\n"
+                    )
+                    clean_analysis = self.analyze(clean, build_fixes=True)
+                    self.assertEqual(clean_analysis.diagnostics, ())
+                    self.assertEqual(clean_analysis.edits, ())
 
-        self.assertEqual(
-            [diagnostic.code for diagnostic in missing_analysis.diagnostics],
-            ["BLK000"],
-        )
-        self.assertEqual(
-            missing_fixed.decode(),
-            """struct Missing {
-    //
-    /// First field.
-    first: String,
-    second: String,
-}
-""",
-        )
-
-        source = """struct Payload {
-    //
-    first: String,
-    second: String,
-}
-"""
-        analysis = self.analyze(source, build_fixes=True)
-        fixed = apply_edits(source.encode(), analysis.edits)
-
-        self.assertEqual(
-            [diagnostic.code for diagnostic in analysis.diagnostics],
-            [],
-        )
-        self.assertEqual(
-            fixed.decode(),
-            source,
-        )
+                    source = clean.replace("{\n", "{\n    //\n", 1)
+                    analysis = self.analyze(source, build_fixes=True)
+                    fixed = apply_edits(source.encode(), analysis.edits)
+                    self.assertEqual(
+                        [diagnostic.code for diagnostic in analysis.diagnostics],
+                        ["BLK002"],
+                    )
+                    self.assertEqual(fixed.decode(), clean)
+                    self.assertEqual(self.analyze(fixed.decode()).diagnostics, ())
 
     def test_single_member_declaration_separator_is_redundant(self) -> None:
         source = """enum Payload {
@@ -179,7 +162,7 @@ struct Item {
 """,
         )
 
-    def test_single_multiline_enum_variant_requires_separator(self) -> None:
+    def test_single_multiline_enum_variant_needs_no_separator(self) -> None:
         source = """enum Payload {
     Value {
         first: String,
@@ -192,12 +175,11 @@ struct Item {
 
         self.assertEqual(
             [diagnostic.code for diagnostic in analysis.diagnostics],
-            ["BLK000"],
+            [],
         )
         self.assertEqual(
             fixed.decode(),
             """enum Payload {
-    //
     Value {
         first: String,
         second: String,
@@ -285,7 +267,7 @@ struct Item {
             all(diagnostic.level == "warning" for diagnostic in analysis.diagnostics)
         )
 
-    def test_macro_struct_declaration_requires_separator(self) -> None:
+    def test_macro_struct_declaration_needs_no_separator(self) -> None:
         analysis = self.analyze(
             """declare! {
     //
@@ -303,8 +285,7 @@ struct Item {
             for diagnostic in analysis.diagnostics
             if diagnostic.code == "BLK000" and diagnostic.line == 4
         ]
-        self.assertEqual(len(found), 1)
-        self.assertEqual(found[0].level, "warning")
+        self.assertEqual(found, [])
         self.assertEqual(analysis.edits, ())
 
     def test_macro_select_compliant_body_is_clean(self) -> None:
@@ -434,12 +415,11 @@ fn f() {
 
         self.assertEqual(
             [diagnostic.code for diagnostic in analysis.diagnostics],
-            ["BLK000", "BLK002", "BLK001"],
+            ["BLK002", "BLK001"],
         )
         self.assertEqual(
             fixed.decode(),
             """enum Payload {
-    //
     First {
         first: String,
         second: String,
