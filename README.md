@@ -2,14 +2,21 @@
 
 Tree-sitter based Rust style checkers, selected and configured per project
 via a `rust-style-lint.toml` at the project root. Extracted from the
-PopRaKo `fmt/` suite: every checker is a pure AST pass — reports violations
+PopRaKo `fmt/` suite: every checker is a pure AST pass - reports violations
 only, never modifies source (except checkers that document `--fix`).
 
 ## Rule documentation
 
-Every rule has a dedicated spec in `docs/rules/` — goal, trigger condition, exact
+All project file contents and paths must use ASCII only. Write documentation,
+comments, diagnostics, and test fixtures in English with ASCII punctuation.
+Run `.venv/bin/python -m unittest tests.test_ascii_only` to check this requirement.
+
+Every rule has a dedicated spec in `docs/rules/` - goal, trigger condition, exact
 violation message, GOOD/BAD examples, `--fix` support, and config keys. Read the
-doc instead of the source when a rule flags your code:
+doc instead of the source when a rule flags your code. Diagnostic output from
+both the runner and standalone checkers includes the corresponding document path
+once per rule. You must read that document first: do not skip it to inspect code,
+and do not judge or modify code based only on the error output.
 
 | Name | Code | Doc |
 | --- | --- | --- |
@@ -35,12 +42,12 @@ doc instead of the source when a rule flags your code:
 
 | Name | Code | Rule |
 | --- | --- | --- |
-| `no-inline-tests` | TST001 | `#[cfg(test)] mod tests { … }` must live in a separate `tests.rs` |
-| `no-inline-format` | FMT001 | no `{name}` inline captures in format strings — all args positional |
+| `no-inline-tests` | TST001 | `#[cfg(test)] mod tests { ... }` must live in a separate `tests.rs` |
+| `no-inline-format` | FMT001 | no `{name}` inline captures in format strings - all args positional |
 | `spacing-style` | BLK000-003 | block-start `//`; forbid leading `//` in struct/enum declarations; blank lines between statements, arms, variants, and module items |
 | `use-style` | USE_\* | import grouping, merging, sorting, dedup; `as _` for known traits; `--fix` capable |
 | `generic-where` | GEN001-004 | canonical `where` bounds; no argument-position `impl Trait`; call-site-only trait bounds |
-| `no-type-hint` | NO_TYPE_HINT | no `let x: T = …`; pin types with turbofish |
+| `no-type-hint` | NO_TYPE_HINT | no `let x: T = ...`; pin types with turbofish |
 | `no-redundant-destructure` | DSTR001 | destructure an expression directly instead of naming and immediately unpacking it |
 | `no-unnamed-fields` | ENUM001 | forbid unnamed (tuple) fields in enum variants |
 | `item-layout` | LAYOUT001-004 | impl follows struct; pub before private; helpers in first-call order |
@@ -64,7 +71,7 @@ Put a `rust-style-lint.toml` at the target project root:
 [linters]
 no-inline-tests = true
 use-style = true
-# … only the checkers you want; commented-out keys are disabled
+# ... only the checkers you want; commented-out keys are disabled
 
 [module-dependency]
 exclude_files = ["src/generated/schema.rs"]
@@ -79,7 +86,7 @@ including member crates such as `*-macro/` and `*-util/`; conventional
 Rule tables are data, not code. The package ships `defaults.toml` with every
 default table (forbidden words, known traits, exclusions, ignore directories).
 A project section **replaces the packaged defaults for that checker as a
-whole** — a `[forbidden-identifiers]` section therefore declares the complete
+whole** - a `[forbidden-identifiers]` section therefore declares the complete
 word table, not a delta. Sections that are absent fall back to the packaged
 defaults. There is no rule content in the checker code itself.
 
@@ -93,9 +100,9 @@ python -m rust_style_lint --root /path/to/target
 
 Flags:
 
-- `--root DIR` — target project root (default: current directory).
-- `--fix` — call each checker's `fix(root, config)` where one exists.
-- `--self-test` — run every checker's internal self-test.
+- `--root DIR` - target project root (default: current directory).
+- `--fix` - call each checker's `fix(root, config)` where one exists.
+- `--self-test` - run every checker's internal self-test.
 
 Checkers can also run standalone:
 

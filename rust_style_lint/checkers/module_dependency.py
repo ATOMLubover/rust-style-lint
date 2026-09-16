@@ -13,7 +13,7 @@ from pathlib import Path
 import tree_sitter
 import tree_sitter_rust
 
-from ..base import Violation, crate_roots
+from ..base import Violation, print_rule_guidance, crate_roots
 
 
 PATH_KINDS = {"scoped_identifier", "scoped_type_identifier"}
@@ -1122,6 +1122,8 @@ def main() -> int:
         return self_test()
 
     violations = check(args.root.resolve())
+
+    print_rule_guidance("module-dependency", violations)
 
     for violation in violations:
         prefix = "warning" if violation.level == "warning" else "error"

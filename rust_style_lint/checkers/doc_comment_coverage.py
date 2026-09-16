@@ -19,7 +19,7 @@ Skipped items
 -------------
 - Items annotated with `#[test]`, `#[tokio::test]`, or `#[rstest::...]`.
 - The `main` function in `src/main.rs`.
-- Inner doc comments (`//!`, `/*!`) — these document the enclosing module,
+- Inner doc comments (`//!`, `/*!`) - these document the enclosing module,
   not the following item.
 
 Config
@@ -39,7 +39,7 @@ from pathlib import Path
 import tree_sitter
 import tree_sitter_rust
 
-from ..base import Violation, source_files
+from ..base import Violation, print_rule_guidance, source_files
 from ..config import merged
 from ..production_source import production_source
 
@@ -279,6 +279,23 @@ def has_comment(
     return False
 
 
+def comment_insertion_line(declaration: tree_sitter.Node) -> int:
+    """Return the line above which a comment should be inserted."""
+
+    first = declaration
+    sibling = declaration.prev_sibling
+
+    while sibling is not None:
+        if sibling.type == "attribute_item":
+            first = sibling
+        elif sibling.type not in ("line_comment", "block_comment"):
+            break
+
+        sibling = sibling.prev_sibling
+
+    return first.start_point.row + 1
+
+
 def check_file(path: Path, root: Path) -> list[Violation]:
     source = production_source(path, root)
     tree = PARSER.parse(source)
@@ -308,7 +325,7 @@ def check_file(path: Path, root: Path) -> list[Violation]:
         violations.append(
             Violation(
                 path=path.relative_to(root),
-                line=name_node.start_point.row + 1,
+                line=comment_insertion_line(declaration),
                 code="DOC001",
                 message=(
                     f"{visibility} {declaration.type.replace('_', ' ')} "
@@ -342,7 +359,7 @@ def self_test() -> int:
         src.mkdir()
         fixture = src / "fixture.rs"
 
-        # ── valid: documented items ───────────────────────────────────
+        # -- valid: documented items -----------------------------------
 
         fixture.write_text(
             "/// A documented public function.\n"
@@ -377,7 +394,7 @@ def self_test() -> int:
             print("self-test: valid documented fixture was rejected", file=sys.stderr)
             return 1
 
-        # ── invalid: undocumented items ──────────────────────────────
+        # -- invalid: undocumented items ------------------------------
 
         fixture.write_text(
             "pub fn undocumented_fn() {}\n"
@@ -425,7 +442,7 @@ def self_test() -> int:
             print("\n".join(str(violation) for violation in violations), file=sys.stderr)
             return 1
 
-        # ── test item annotated with #[test] is skipped ──────────────
+        # -- test item annotated with #[test] is skipped --------------
 
         fixture.write_text(
             "#[test]\n"
@@ -439,7 +456,7 @@ def self_test() -> int:
             print("self-test: test functions were not skipped", file=sys.stderr)
             return 1
 
-        # ── private items require regular comments ───────────────────
+        # -- private items require regular comments -------------------
 
         fixture.write_text(
             "// A documented implementation detail.\n"
@@ -473,7 +490,7 @@ def self_test() -> int:
             print("\n".join(str(violation) for violation in violations), file=sys.stderr)
             return 1
 
-        # ── inner doc comments document the enclosing module only ───
+        # -- inner doc comments document the enclosing module only ---
 
         fixture.write_text(
             "//! Documentation for the enclosing module.\n"
@@ -492,7 +509,7 @@ def self_test() -> int:
             print("\n".join(str(violation) for violation in violations), file=sys.stderr)
             return 1
 
-        # ── attributes between doc comment and item are allowed ──────
+        # -- attributes between doc comment and item are allowed ------
 
         fixture.write_text(
             "/// Documented with an attribute in between.\n"
@@ -521,6 +538,8 @@ def main() -> int:
         return self_test()
 
     violations = check(args.root.resolve())
+
+    print_rule_guidance("doc-comment-coverage", violations)
 
     for violation in violations:
         print(f"{violation.path}:{violation.line}: {violation.code}: {violation.message}", file=sys.stderr)

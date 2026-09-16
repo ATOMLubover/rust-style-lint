@@ -1,41 +1,41 @@
 # spacing-style
 
-> 自定义 Rust 块间距规则：块起始分隔符、语句/match arm/enum variant/模块项之间的空行。
-> 代码：`BLK000`–`BLK003`、`PARSE001` ｜ `--fix`：BLK000/BLK001/BLK002/BLK003 支持
+> Custom Rust block spacing: leading separators and blank lines between statements, match arms, enum variants, and module items.
+> Codes: `BLK000`-`BLK003`, `PARSE001` | `--fix`: supported for BLK000/BLK001/BLK002/BLK003
 
-## 目标
+## Goal
 
-强制统一的排版：
+Enforce consistent layout:
 
-1. 多语句/多 match arm 的块，起始 `{` 后必须有一个裸 `//` 分隔符。
-2. 直接相邻的语句、match arm、enum variant 之间必须有空行。
-3. struct/enum 声明、struct 字面量和字段列表起始处禁止裸 `//`；单单位紧凑块里的裸 `//` 是冗余的。
-4. 模块作用域内的项（struct/impl/trait/fn/mod/use/const/static/type/…）之间必须有空行。
+1. Blocks containing multiple statements or match arms require a bare `//` separator after the opening `{`.
+2. Adjacent statements, match arms, and enum variants require a blank line between them.
+3. Bare `//` is forbidden at the start of struct/enum declarations, struct literals, and field lists; it is redundant in compact single-unit blocks.
+4. Module-scope items (struct/impl/trait/fn/mod/use/const/static/type/etc.) require blank lines between them.
 
-## 裸 `//` 分隔符（bare separator）是什么
+## What is a bare `//` separator?
 
-匹配 `^\s*//\s*$` 的行——整行只有 `//`（可带前后空白）。纯视觉分割线。
-与之相对的是"真注释"（含实际文本的 `// 注释`）。
+A line matching `^\s*//\s*$`: only `//`, with optional surrounding whitespace. It is purely a visual separator.
+A real comment, in contrast, contains text, such as `// Explanation`.
 
-函数和 match 块起始处的真注释可以满足 BLK000。struct/enum 声明起始处禁止裸 `//`，
-保留 `///` 或有内容的 `//`。
+A real comment at the start of a function or match block satisfies BLK000. Bare `//` is forbidden at the start of struct/enum declarations;
+keep `///` or `//` comments containing text.
 
-## BLK000 — 块起始缺裸 `//` 分隔符
+## BLK000 - Missing leading bare `//` separator
 
-> message：`{description} whose opening brace is not on its own line requires a bare // separator before its first {kind}`
-> `description` 取值：`multi-{kind} block`（≥2 个单位）或 `multi-line {kind} block`（单单位跨多行）
-> `kind` 取值：`statement`、`match arm`
+> Message: `{description} whose opening brace is not on its own line requires a bare // separator before its first {kind}`
+> `description`: `multi-{kind} block` (at least two units) or `multi-line {kind} block` (one unit spanning multiple lines).
+> `kind`: `statement` or `match arm`.
 
-### 触发条件
+### Trigger conditions
 
-容器是 `block` 或 `match_block`，且：
+The container is a `block` or `match_block`, and:
 
-- `{` 不是单独独占一行；且
-- （单位数 ≥ 2 或 首个单位跨多行）；且
-- `{` 与首个单位之间没有裸 `//` 分隔符；且
-- 也没有真注释。
+- `{` is not on a line by itself; and
+- There are at least two units, or the first unit spans multiple lines; and
+- There is no bare `//` separator between `{` and the first unit; and
+- There is no real comment there either.
 
-### 违规（BAD）
+### Violations (BAD)
 
 ```rust
 if condition {
@@ -45,9 +45,9 @@ if condition {
 }
 ```
 
-单单位跨多行同样要分隔符（如块内一个跨多行的 `match` 表达式）。
+A single multiline unit also requires a separator, such as a multiline `match` expression inside a block.
 
-### 符合（GOOD）
+### Compliant (GOOD)
 
 ```rust
 if condition {
@@ -58,7 +58,7 @@ if condition {
 }
 ```
 
-真注释也满足分隔需求：
+A real comment also satisfies the separation requirement:
 
 ```rust
 if condition {
@@ -68,31 +68,31 @@ if condition {
 }
 ```
 
-### 豁免
+### Exemptions
 
-- `{` 单独独占一行（`if condition\n{`）——不需要分隔符。
-- 单语句且单行能放下的紧凑块——不强制。
-- 所有 enum/struct 声明——禁止起始分隔符。
-- struct 字面量、union 和 enum 结构体 variant 内部字段列表——不要求分隔符。
+- `{` on its own line (`if condition\n{`) needs no separator.
+- A compact block containing a single single-line statement needs no separator.
+- All enum/struct declarations forbid leading separators.
+- Struct literals and field lists inside unions or enum struct variants do not require separators.
 
 ### --fix
 
-插入一行 `//`。两种形式：(a) 首单位在后续行时，在 `{` 下一行插入与首单位同缩进的 `//`；
-(b) 极端内联形式 `{ first; second; }` 时，拆行插入 `//` 并重新缩进首单位。
+Insert a `//` line. Two forms: (a) when the first unit is on a later line, insert `//` immediately after `{`, indented like the first unit;
+(b) for an inline block `{ first; second; }`, split the line, insert `//`, and reindent the first unit.
 
-## BLK001 — 单位间缺空行
+## BLK001 - Missing blank line between units
 
-> message：`missing blank line before this {kind}; previous {kind} ended at line {line_number}`
-> `kind` 取值：`statement`、`match arm`、`enum variant`
+> Message: `missing blank line before this {kind}; previous {kind} ended at line {line_number}`
+> `kind`: `statement`, `match arm`, or `enum variant`.
 
-### 触发条件
+### Trigger conditions
 
-`block` / `match_block` / `enum_variant_list` 容器内两个连续直接单位：
+Two consecutive direct units in a `block`, `match_block`, or `enum_variant_list`:
 
-- 不在同一行（`previous.end_point.row != current.start_point.row`）；且
-- 前一个单位结束与当前单位开始之间没有任何全空行。
+- Are on different lines (`previous.end_point.row != current.start_point.row`); and
+- Have no entirely blank line between the previous unit's end and the current unit's start.
 
-### 违规（BAD）
+### Violations (BAD)
 
 ```rust
 enum Payload {
@@ -103,7 +103,7 @@ enum Payload {
 }
 ```
 
-### 符合（GOOD）
+### Compliant (GOOD)
 
 ```rust
 enum Payload {
@@ -115,7 +115,7 @@ enum Payload {
 }
 ```
 
-语句间同理：
+The same rule applies between statements:
 
 ```rust
 fn example() {
@@ -129,25 +129,25 @@ fn example() {
 }
 ```
 
-### 豁免
+### Exemptions
 
-- 同行语句（用 `;` 分隔）——不查。
-- struct 字段——不查空行。
+- Same-line statements separated by `;` are not checked.
+- Struct fields are not checked for blank lines.
 
 ### --fix
 
-在当前单位前插入空行。若两个语句之间有解释性注释，空行插在**注释前**，让注释保持附着在其描述的语句上。
+Insert a blank line before the current unit. If explanatory comments separate two statements, insert the blank line **before the comments** so they stay attached to the statement they describe.
 
-## BLK002 — 冗余裸 `//` 分隔符
+## BLK002 - Redundant bare `//` separator
 
-### 变体一：声明和字段列表起始处的分隔符
+### Variant 1: Leading separator in declarations and field lists
 
-> message：`bare // separator is forbidden in this field list; fields here need no separator`
+> Message: `bare // separator is forbidden in this field list; fields here need no separator`
 
-struct/enum 声明、struct 字面量的 `field_initializer_list`，以及 union/enum 结构体 variant 的
-`field_declaration_list`，在 `{` 与首个成员之间存在裸 `//`。无论成员数量、成员是否跨行、
-`{` 是否独占一行，均禁止。声明的 message 为
-`bare // separator is forbidden at the start of this struct or enum declaration`。
+A struct/enum declaration, a struct literal's `field_initializer_list`, or a union/enum struct variant's
+`field_declaration_list` has a bare `//` between `{` and its first member. This is forbidden regardless of the member count, multiline members,
+or whether `{` occupies its own line. For declarations, the message is
+`bare // separator is forbidden at the start of this struct or enum declaration`.
 
 ```rust
 // BAD
@@ -164,13 +164,13 @@ let payload = Payload {
 };
 ```
 
-外层函数块的裸 `//`（`block` 容器）不被此变体标记，只删除字段列表里的分隔符。
+This variant does not flag bare `//` in the enclosing function block (`block`); it only removes separators in field lists.
 
-### 变体二：单语句块里的冗余分隔符
+### Variant 2: Redundant separator in a single-statement block
 
-> message：`bare // block-start separator is redundant in a single-statement block`
+> Message: `bare // block-start separator is redundant in a single-statement block`
 
-`block` / `match_block` 恰好 1 个单位、单行、且 `{` 与单位之间有裸 `//`。
+A `block` / `match_block` contains exactly one single-line unit and has a bare `//` between `{` and that unit.
 
 ```rust
 // BAD
@@ -187,19 +187,19 @@ if condition {
 
 ### --fix
 
-删除裸 `//` 行。若 `{` 与单位之间只有空行和裸 `//`，全部删掉；若有真注释或其他内容，只删裸 `//` 行。
+Delete the bare `//` line. If only blank lines and bare `//` separate `{` from the unit, delete all of them; if real comments or other content exist, delete only the bare `//` lines.
 
-## BLK003 — 项之间缺空行
+## BLK003 - Missing blank line between items
 
-> message：`missing blank line before this {kind}; previous {kind} ended at line {line_number}`
-> `kind` 取值：`struct`、`impl block`、`trait`、`function`、`module`、`use declaration`、`constant`、`static`、`type alias`、`enum`、`union`、`macro definition`、`macro invocation`、`extern crate`、`extern block` 等
+> Message: `missing blank line before this {kind}; previous {kind} ended at line {line_number}`
+> `kind`: `struct`, `impl block`, `trait`, `function`, `module`, `use declaration`, `constant`, `static`, `type alias`, `enum`, `union`, `macro definition`, `macro invocation`, `extern crate`, `extern block`, etc.
 
-### 触发条件
+### Trigger conditions
 
-模块作用域（顶层 `source_file` 与内联 `mod { … }` 的 `declaration_list`）内，两个连续的直接"项"
-之间没有空行。项 = struct/enum/union/impl/trait/fn/mod/use/const/static/type/macro_rules!/宏调用/extern crate/extern 块等。
+Two consecutive direct items in module scope (top-level `source_file` or an inline `mod { ... }` declaration_list)
+have no blank line between them. Items include struct/enum/union/impl/trait/fn/mod/use/const/static/type/macro_rules!/macro invocations/extern crate/extern blocks.
 
-### 违规（BAD）
+### Violations (BAD)
 
 ```rust
 use crate::result::BaseRest;
@@ -209,7 +209,7 @@ pub struct ImageUploadSpec<'a> {
 }
 ```
 
-### 符合（GOOD）
+### Compliant (GOOD)
 
 ```rust
 use crate::result::BaseRest;
@@ -220,50 +220,50 @@ pub struct ImageUploadSpec<'a> {
 }
 ```
 
-### 豁免
+### Exemptions
 
-- 容器内第一个项——前面没有东西可比。
-- 同行的两个项（`fn a() {} fn b() {}`）——不查。
-- 连续的同类型 header 项：`use`↔`use`、`mod`↔`mod`——不强制空行，内部分组交给 use-style 管理。
-- `impl`/`trait`/`extern` 体内的 method——不查（本规则只到模块作用域）。
+- The first item in a container has no preceding item to compare.
+- Two same-line items (`fn a() {} fn b() {}`) are not checked.
+- Consecutive header items of the same kind (`use` with `use`, `mod` with `mod`) do not require blank lines; use-style manages their internal grouping.
+- Methods inside impl/trait/extern bodies are not checked; this rule applies only at module scope.
 
-### 锚点（anchor）
+### Anchor
 
-项的前导注释/属性（`///`、`//`、`#[...]`）随项一起移动：空行要求落在整组之前，缺失时在
-注释/属性行首插入空行，注释保持附着在其描述的项上。
+Leading comments and attributes (`///`, `//`, `#[...]`) move with the item: the blank line belongs before the entire group. When missing,
+insert it before the comment/attribute line so comments remain attached to their item.
 
 ### --fix
 
-在当前项（或它的前导注释/属性）的行首插入一个空行。
+Insert one blank line at the start of the current item's line, or before its leading comments/attributes.
 
-## PARSE001 — Rust 语法解析错误（软警告）
+## PARSE001 - Rust syntax parse error (soft warning)
 
-> message：`Rust syntax tree contains {node.type!r}; spacing results near this location may be incomplete`
+> Message: `Rust syntax tree contains {node.type!r}; spacing results near this location may be incomplete`
 
-tree-sitter AST 里出现 `ERROR` 节点或 `is_missing` 节点时提示。**无 fix**——解析错误的文件在 fix 时整体跳过，避免基于不完整节点范围做错误编辑。
+Report tree-sitter `ERROR` nodes or `is_missing` nodes. **No fix**: files with parse errors are skipped entirely during fixing to avoid editing based on incomplete node ranges.
 
-## 宏体（macro body）检查
+## Macro body checks
 
-tree-sitter 把宏调用体解析成不透明的 `token_tree`，里面**没有** `block` / `match_block`
-节点——所以只查真实容器的话，`tokio::select!` 等宏体内的 spacing 问题完全查不到。
+Tree-sitter parses macro bodies as opaque `token_tree` nodes without `block` / `match_block`
+children, so checking only ordinary containers would miss spacing issues in macros such as `tokio::select!`.
 
-此 checker 会**下沉进宏体**，复刻 rustfmt 的两级策略：
+The checker **descends into macro bodies** using a two-tier strategy modeled on rustfmt:
 
-1. **Tier 1（按 Rust 解析）**：取宏体花括号内层字节单独重解析，若**无 `ERROR` 节点**
-   （arm 体、内层 `match`、`else` 块、`return;`/`break;` 等），按完整规则跑 BLK000/BLK001/BLK002
-   ——含**语句级**空行检查，不只限 match arm。位置经字节偏移映射回原文件。
-2. **Tier 2（`=>` match-like 启发式）**：重解析失败的是自定义语法（select! 的
-   `pattern = expr, if guard => body`、裸 match arm 列表等），在 token 层按顶层 `=>` 切分 arm，
-   报 arm 级 BLK000/BLK001。按 `=>` 切分而非逗号——`if guard` 的逗号属于 arm 内部。
+1. **Tier 1 (parse as Rust)**: reparse the bytes inside the macro braces independently. If there are **no `ERROR` nodes**,
+   apply BLK000/BLK001/BLK002 to arm bodies, nested matches, else blocks, return/break statements, etc.,
+   including **statement-level** blank-line checks, not just match arms. Map positions back to the original file using byte offsets.
+2. **Tier 2 (`=>` match-like heuristic)**: when reparsing fails on custom syntax (such as select!'s
+   `pattern = expr, if guard => body` or a bare match-arm list), split token-level arms at top-level `=>`
+   and report arm-level BLK000/BLK001. Split on `=>`, not commas, because an `if guard` comma belongs inside an arm.
 
-宏体内的诊断一律是 **`warning`**（不 fail 退出码），message 追加 `(macro body)` 后缀，
-且**永不 `--fix`**——宏体是自定义语法，不能安全改写，须按规则手改。
+All macro-body diagnostics are **warnings** (they do not fail the exit status), with a `(macro body)` message suffix,
+and are **never fixed automatically**: custom macro syntax cannot be safely rewritten and needs manual edits.
 
-跳过：`macro_rules!` 定义体（`macro_definition`）、`(...)` / `[...]` 定界的宏
-（`vec!`、`format!`、`println!` 等）。
+Skip `macro_rules!` definition bodies (`macro_definition`) and macros delimited by `(...)` / `[...]`
+(such as `vec!`, `format!`, and `println!`).
 
 ```rust
-// BAD —— 全在宏体内，报 warning
+// BAD - All inside a macro body; reports warnings.
 tokio::select! {
     command = recv.recv() => {
         handle();
@@ -286,13 +286,13 @@ tokio::select! {
 }
 ```
 
-## 架构要点（了解即可）
+## Architecture notes
 
-- 外层属性（`#[...]`）与其后的语句组成**一个单位**，不单独计数。`#[cfg(...)]\nlet x = ...` 是一个单位，不会误报 BLK001。
-- 两个 checker 都用 `production_source()` 掩码 `#[cfg(test)]` 模块和 `tests/` 目录——测试代码对间距检查不可见。
+- Outer attributes (`#[...]`) and their following statement form **one unit**, not separate units. `#[cfg(...)]\nlet x = ...` will not falsely trigger BLK001.
+- Both checkers use `production_source()` to mask `#[cfg(test)]` modules and `tests/` directories, making test code invisible to spacing checks.
 
-## 配置
+## Configuration
 
-| 键 | 说明 | 默认 |
+| Key | Description | Default |
 | --- | --- | --- |
-| `ignore_dirs` | 目录名列表，`.rs` 文件发现时跳过（路径任意一段命中即忽略） | `[".git", ".hg", ".svn", ".idea", ".vscode", "target", "node_modules"]` |
+| `ignore_dirs` | Directory names skipped during `.rs` discovery; a match in any path segment excludes the file | `[".git", ".hg", ".svn", ".idea", ".vscode", "target", "node_modules"]` |

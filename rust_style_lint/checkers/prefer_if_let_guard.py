@@ -59,7 +59,7 @@ from pathlib import Path
 import tree_sitter
 import tree_sitter_rust
 
-from ..base import Violation, source_files
+from ..base import Violation, print_rule_guidance, source_files
 from ..config import merged
 from ..production_source import production_source
 
@@ -401,7 +401,7 @@ def self_test() -> int:
         src.mkdir()
         fixture = src / "fixture.rs"
 
-        # ── flagged: diverging guard ─────────────────────────────────
+        # -- flagged: diverging guard ---------------------------------
 
         fixture.write_text(
             "pub fn f(value: Option<u8>) {\n"
@@ -421,7 +421,7 @@ def self_test() -> int:
             print(f"self-test: wrong suggestion for diverging guard: {violations[0].message}", file=sys.stderr)
             return 1
 
-        # ── flagged: empty guard ─────────────────────────────────────
+        # -- flagged: empty guard -------------------------------------
 
         fixture.write_text(
             "pub fn f(value: Option<u8>) {\n"
@@ -441,7 +441,7 @@ def self_test() -> int:
             print(f"self-test: wrong suggestion for empty guard: {violations[0].message}", file=sys.stderr)
             return 1
 
-        # ── flagged: empty opposite of diverging arm ────────────────
+        # -- flagged: empty opposite of diverging arm ----------------
 
         fixture.write_text(
             "pub fn f(member_info: Option<MemberInfo>) {\n"
@@ -465,7 +465,7 @@ def self_test() -> int:
             print(f"self-test: wrong suggestion for mixed match: {violations[0].message}", file=sys.stderr)
             return 1
 
-        # ── flagged: unit-expression guard counts as empty ───────────
+        # -- flagged: unit-expression guard counts as empty -----------
 
         fixture.write_text(
             "pub fn f(value: Option<u8>) {\n"
@@ -481,7 +481,7 @@ def self_test() -> int:
             print(f"self-test: unit guard not flagged; got {len(violations)}", file=sys.stderr)
             return 1
 
-        # ── flagged: diverging block with leading statements ─────────
+        # -- flagged: diverging block with leading statements ---------
 
         fixture.write_text(
             "pub fn f(value: Option<u8>) {\n"
@@ -500,7 +500,7 @@ def self_test() -> int:
             print(f"self-test: diverging block not flagged; got {len(violations)}", file=sys.stderr)
             return 1
 
-        # ── flagged: diverging macro guard ───────────────────────────
+        # -- flagged: diverging macro guard ---------------------------
 
         fixture.write_text(
             "pub fn f(value: Option<u8>) {\n"
@@ -516,7 +516,7 @@ def self_test() -> int:
             print(f"self-test: macro guard not flagged; got {len(violations)}", file=sys.stderr)
             return 1
 
-        # ── flagged: identical multi-guard collapses into one else ──
+        # -- flagged: identical multi-guard collapses into one else --
 
         fixture.write_text(
             "pub fn f(value: Option<u8>) {\n"
@@ -533,7 +533,7 @@ def self_test() -> int:
             print(f"self-test: identical multi-guard not flagged; got {len(violations)}", file=sys.stderr)
             return 1
 
-        # ── flagged: `//` separator comments are not match arms ─────
+        # -- flagged: `//` separator comments are not match arms -----
 
         fixture.write_text(
             "pub fn f(value: Option<u8>) {\n"
@@ -552,7 +552,7 @@ def self_test() -> int:
             print(f"self-test: comment separators broke detection; got {len(violations)}", file=sys.stderr)
             return 1
 
-        # ── kept: two business arms ──────────────────────────────────
+        # -- kept: two business arms ----------------------------------
 
         fixture.write_text(
             "pub fn f(value: Option<u8>) {\n"
@@ -568,7 +568,7 @@ def self_test() -> int:
             print(f"self-test: two-business match was flagged", file=sys.stderr)
             return 1
 
-        # ── kept: multi-pattern dispatch ─────────────────────────────
+        # -- kept: multi-pattern dispatch -----------------------------
 
         fixture.write_text(
             "pub fn f(value: Option<u8>) {\n"
@@ -585,7 +585,7 @@ def self_test() -> int:
             print(f"self-test: multi-pattern match was flagged", file=sys.stderr)
             return 1
 
-        # ── kept: wildcard business fallback ─────────────────────────
+        # -- kept: wildcard business fallback -------------------------
 
         fixture.write_text(
             "pub fn f(value: Option<u8>) {\n"
@@ -601,7 +601,7 @@ def self_test() -> int:
             print(f"self-test: wildcard fallback was flagged", file=sys.stderr)
             return 1
 
-        # ── kept: match guard cannot be expressed with if-let ────────
+        # -- kept: match guard cannot be expressed with if-let --------
 
         fixture.write_text(
             "pub fn f(value: Option<u8>) {\n"
@@ -617,7 +617,7 @@ def self_test() -> int:
             print(f"self-test: match guard was flagged", file=sys.stderr)
             return 1
 
-        # ── kept: guard body uses a binding from its own pattern ────
+        # -- kept: guard body uses a binding from its own pattern ----
 
         fixture.write_text(
             "pub fn f(value: Result<u8, String>) -> u8 {\n"
@@ -633,7 +633,7 @@ def self_test() -> int:
             print(f"self-test: binding-using guard was flagged", file=sys.stderr)
             return 1
 
-        # ── flagged: guard binds only a wildcard ─────────────────────
+        # -- flagged: guard binds only a wildcard ---------------------
 
         fixture.write_text(
             "pub fn f(value: Result<u8, String>) -> u8 {\n"
@@ -649,7 +649,7 @@ def self_test() -> int:
             print(f"self-test: wildcard-binding guard not flagged; got {len(violations)}", file=sys.stderr)
             return 1
 
-        # ── kept: mixed empty and diverging guards ───────────────────
+        # -- kept: mixed empty and diverging guards -------------------
 
         fixture.write_text(
             "pub fn f(value: Option<u8>) {\n"
@@ -666,7 +666,7 @@ def self_test() -> int:
             print(f"self-test: mixed guards were flagged", file=sys.stderr)
             return 1
 
-        # ── kept: guards diverging in different ways ─────────────────
+        # -- kept: guards diverging in different ways -----------------
 
         fixture.write_text(
             "pub fn f(value: Option<u8>) {\n"
@@ -683,7 +683,7 @@ def self_test() -> int:
             print(f"self-test: distinct diverging guards were flagged", file=sys.stderr)
             return 1
 
-        # ── kept: guard block whose tail does not diverge ────────────
+        # -- kept: guard block whose tail does not diverge ------------
 
         fixture.write_text(
             "pub fn f(value: Option<u8>) {\n"
@@ -703,7 +703,7 @@ def self_test() -> int:
             print(f"self-test: conditional guard block was flagged", file=sys.stderr)
             return 1
 
-        # ── kept: single-arm match ───────────────────────────────────
+        # -- kept: single-arm match -----------------------------------
 
         fixture.write_text(
             "pub fn f(value: Option<u8>) {\n"
@@ -731,6 +731,8 @@ def main() -> int:
         return self_test()
 
     violations = check(args.root.resolve())
+
+    print_rule_guidance("prefer-if-let-guard", violations)
 
     for violation in violations:
         location = (

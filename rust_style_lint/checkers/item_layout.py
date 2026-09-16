@@ -11,7 +11,7 @@ from pathlib import Path
 import tree_sitter
 import tree_sitter_rust
 
-from ..base import Violation, source_files
+from ..base import Violation, print_rule_guidance, source_files
 from ..production_source import production_source
 
 
@@ -371,6 +371,8 @@ def main() -> int:
         return self_test()
 
     violations = check(args.root.resolve())
+
+    print_rule_guidance("item-layout", violations)
 
     for violation in violations:
         print(f"{violation.path}:{violation.line}: {violation.code}: {violation.message}", file=sys.stderr)

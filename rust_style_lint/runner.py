@@ -8,7 +8,7 @@ import sys
 import tomllib
 from pathlib import Path
 
-from .base import Violation
+from .base import Violation, print_rule_guidance
 
 CONFIG_FILENAME = "rust-style-lint.toml"
 
@@ -75,13 +75,13 @@ def run_self_tests() -> int:
         if not hasattr(module, "self_test"):
             continue
 
-        print(f"━━━ self-test: {name} ━━━")
+        print(f"--- self-test: {name} ---")
         result = module.self_test()
 
         if result == 0:
-            print(f"✓ {name} passed")
+            print(f"PASS {name} passed")
         else:
-            print(f"✗ {name} failed")
+            print(f"FAIL {name} failed")
             failed = True
 
     return 1 if failed else 0
@@ -118,6 +118,7 @@ def main() -> int:
         module = load_checker(name)
         section = config.get(name)
         violations = run_checker(module, root, section, args.fix)
+        print_rule_guidance(name, violations)
 
         for violation in violations:
             location = (

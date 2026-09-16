@@ -19,7 +19,7 @@ from pathlib import Path
 import tree_sitter
 import tree_sitter_rust
 
-from ..base import Violation, source_files
+from ..base import Violation, print_rule_guidance, source_files
 
 
 PARSER = tree_sitter.Parser(tree_sitter.Language(tree_sitter_rust.language()))
@@ -63,7 +63,7 @@ def check_file(path: Path, root: Path, source: bytes) -> list[Violation]:
                 line=source.count(b"\n", 0, attribute.start_byte) + 1,
                 code="NO_ALLOW",
                 message=(
-                    f"`#[allow({lints})]` is forbidden — restructure the "
+                    f"`#[allow({lints})]` is forbidden - restructure the "
                     "code to eliminate the lint instead of silencing it"
                 ),
             ),
@@ -123,6 +123,8 @@ def main() -> int:
 
     if args.fix:
         print("note: --fix is a no-op; remove the suppression by restructuring", file=sys.stderr)
+
+    print_rule_guidance("no-allow", violations)
 
     for violation in violations:
         print(f"{violation.path}:{violation.line}: {violation.code}: {violation.message}", file=sys.stderr)

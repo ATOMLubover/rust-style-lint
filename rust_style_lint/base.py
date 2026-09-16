@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import sys
 
 
 IGNORED_SOURCE_PARENTS = frozenset({
@@ -25,6 +26,20 @@ class Violation:
     column: int | None = None
     # "error" fails the run; "warning" is reported but does not fail it.
     level: str = "error"
+
+
+def print_rule_guidance(name: str, violations: list[Violation]) -> None:
+    """Require reading the matching rule specification before addressing diagnostics."""
+    if not violations:
+        return
+
+    document = Path(__file__).resolve().parent.parent / "docs" / "rules" / f"{name}.md"
+    print(
+        f"Before addressing {name} diagnostics, you must read the rule documentation: {document}\n"
+        "Do not inspect code before reading this document. "
+        "Do not diagnose or modify code based only on error output.",
+        file=sys.stderr,
+    )
 
 
 def source_dirs(root: Path) -> list[Path]:

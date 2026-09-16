@@ -1,13 +1,13 @@
 """Forbid unnamed (tuple) fields in enum variants.
 
 Every enum variant must carry named fields. Tuple-style variants are never
-allowed — every field deserves a name that says what it is::
+allowed - every field deserves a name that says what it is::
 
     enum Error {
-        Model(String, u32),            // BAD — unnamed fields
-        Empty(),                       // BAD — unnamed, even when empty
-        Unit,                          // GOOD — no fields
-        Model { message: String },     // GOOD — named fields
+        Model(String, u32),            // BAD - unnamed fields
+        Empty(),                       // BAD - unnamed, even when empty
+        Unit,                          // GOOD - no fields
+        Model { message: String },     // GOOD - named fields
     }
 
 A unit variant has no fields and stays; a struct variant already names every
@@ -24,7 +24,7 @@ from pathlib import Path
 import tree_sitter
 import tree_sitter_rust
 
-from ..base import Violation, source_files
+from ..base import Violation, print_rule_guidance, source_files
 from ..production_source import production_source
 
 
@@ -96,7 +96,7 @@ def self_test() -> int:
         src.mkdir()
         fixture = src / "fixture.rs"
 
-        # ── flagged: tuple variant with multiple fields ───────────────
+        # -- flagged: tuple variant with multiple fields ---------------
 
         fixture.write_text(
             "pub enum Foo {\n"
@@ -118,7 +118,7 @@ def self_test() -> int:
             print(f"self-test: wrong line for tuple variant: {violations[0].line}", file=sys.stderr)
             return 1
 
-        # ── flagged: single-field tuple variant ───────────────────────
+        # -- flagged: single-field tuple variant -----------------------
 
         fixture.write_text(
             "pub enum Foo {\n"
@@ -131,7 +131,7 @@ def self_test() -> int:
             print(f"self-test: single-field tuple variant not flagged; got {len(violations)}", file=sys.stderr)
             return 1
 
-        # ── flagged: empty tuple variant ──────────────────────────────
+        # -- flagged: empty tuple variant ------------------------------
 
         fixture.write_text(
             "pub enum Foo {\n"
@@ -144,7 +144,7 @@ def self_test() -> int:
             print(f"self-test: empty tuple variant not flagged; got {len(violations)}", file=sys.stderr)
             return 1
 
-        # ── not flagged: named fields ─────────────────────────────────
+        # -- not flagged: named fields ---------------------------------
 
         fixture.write_text(
             "pub enum Foo {\n"
@@ -156,7 +156,7 @@ def self_test() -> int:
             print("self-test: named-field variants were rejected", file=sys.stderr)
             return 1
 
-        # ── not flagged: unit variants and discriminants ──────────────
+        # -- not flagged: unit variants and discriminants --------------
 
         fixture.write_text(
             "pub enum Foo {\n"
@@ -169,7 +169,7 @@ def self_test() -> int:
             print("self-test: unit/discriminant variants were rejected", file=sys.stderr)
             return 1
 
-        # ── mixed enum: only the tuple variant is flagged ─────────────
+        # -- mixed enum: only the tuple variant is flagged -------------
 
         fixture.write_text(
             "pub enum Foo {\n"
@@ -215,6 +215,8 @@ def main() -> int:
                 violations.extend(check_file(file, root, visible_source))
     else:
         violations = check(root)
+
+    print_rule_guidance("no-unnamed-fields", violations)
 
     for violation in violations:
         print(f"{violation.path}:{violation.line}: {violation.code}: {violation.message}", file=sys.stderr)

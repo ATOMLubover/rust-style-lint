@@ -11,7 +11,7 @@ from pathlib import Path
 import tree_sitter
 import tree_sitter_rust
 
-from ..base import Violation, crate_roots
+from ..base import Violation, print_rule_guidance, crate_roots
 from ..config import merged
 
 
@@ -534,6 +534,8 @@ def main() -> int:
         return self_test()
 
     violations = check(args.root.resolve())
+
+    print_rule_guidance("visibility-style", violations)
 
     for violation in violations:
         print(f"{violation.path}:{violation.line}:{violation.column}: {violation.code}: {violation.message}", file=sys.stderr)

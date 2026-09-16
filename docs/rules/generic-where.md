@@ -1,44 +1,44 @@
 # generic-where
 
-> 要求泛型类型/生命周期约束必须写在 `where` 子句里；禁止参数位置的 `impl Trait`；
-> 同一个 `where` 子句不得拆分同一主体的约束。
-> 代码：`GEN001`（内联约束）、`GEN002`（参数位置 impl Trait）、`GEN003`（重复 where predicate）、`GEN004`（trait 定义处的 call-site 约束）｜ `--fix`：不支持（仅检测）
+> Generic type and lifetime bounds must appear in `where` clauses; argument-position `impl Trait` is forbidden.
+> Do not split bounds for the same subject across predicates in one `where` clause.
+> Codes: `GEN001` (inline bounds), `GEN002` (argument-position impl Trait), `GEN003` (repeated where predicate), `GEN004` (call-site bounds in trait definitions) | `--fix`: unsupported (check only)
 
-## 目标
+## Goal
 
-- 泛型参数上的约束（`T: Copy`、`'a: 'static`）必须移到 `where` 子句。
-- 参数位置的 `impl Trait` 一律禁止——引入具名泛型参数，把约束放进 `where` 子句。
-  返回值位置的 `impl Trait`（`-> impl Trait`）**允许**。
-- 同一个 `where` 子句中，同一约束主体只能出现一次；所有 bounds 必须合并。
-- `Clone`、`Send`、`Sync`、`'static` 不得由 trait 定义施加；调用方必须在 call site 自行约束。
+- Move generic parameter bounds (`T: Copy`, `'a: 'static`) into a `where` clause.
+- Argument-position `impl Trait` is forbidden: introduce a named generic parameter and put its bounds in `where`.
+  Return-position `impl Trait` (`-> impl Trait`) is **allowed**.
+- Each subject may appear only once in a `where` clause; merge all of its bounds.
+- Trait definitions must not impose `Clone`, `Send`, `Sync`, or `'static`; callers must impose these bounds at the call site.
 
-## GEN001 — 泛型参数内联约束
+## GEN001 - Inline generic parameter bounds
 
-> message：`generic parameter {parameter_name} in {declaration_name} uses an inline bound; move the bound to a where clause`
+> Message: `generic parameter {parameter_name} in {declaration_name} uses an inline bound; move the bound to a where clause`
 
-### 触发条件
+### Trigger conditions
 
-以下声明类型之一带泛型参数（`type_parameter` 或 `lifetime_parameter`），且参数带 `bounds` 字段（语法含 `: Bound`）：
-`enum_item`、`function_item`、`impl_item`、`struct_item`、`trait_item`、`type_item`、`union_item`。
-类型参数（`T: Copy`）和生命周期参数（`'a: 'static`）都查。
-`impl` 项没有 name 字段，message 里 `{declaration_name}` 用 `"impl"`。
+A declaration of one of the following kinds has a generic parameter (`type_parameter` or `lifetime_parameter`) with a `bounds` field (`: Bound` syntax):
+`enum_item`, `function_item`, `impl_item`, `struct_item`, `trait_item`, `type_item`, `union_item`.
+Both type parameters (`T: Copy`) and lifetime parameters (`'a: 'static`) are checked.
+An `impl` item has no name field, so `{declaration_name}` is `"impl"` in its message.
 
-### 违规（BAD）—— 9 处
+### Violations (BAD) - Nine occurrences
 
 ```rust
-fn bad_fn<T: Copy, 'a: 'static>() {}    // 2 处：T: Copy、'a: 'static
-impl<T: Copy> Item<T> {}                // 1 处
-struct BadStruct<T: Copy> {}            // 1 处
-enum BadEnum<T: Copy> {}                // 1 处
-trait BadTrait<T: Copy> {}              // 1 处
-type BadAlias<T: Copy> = Vec<T>;        // 1 处
-union BadUnion<T: Copy> { value: T }    // 1 处
+fn bad_fn<T: Copy, 'a: 'static>() {}    // Two: T: Copy and 'a: 'static
+impl<T: Copy> Item<T> {}                // One occurrence
+struct BadStruct<T: Copy> {}            // One occurrence
+enum BadEnum<T: Copy> {}                // One occurrence
+trait BadTrait<T: Copy> {}              // One occurrence
+type BadAlias<T: Copy> = Vec<T>;        // One occurrence
+union BadUnion<T: Copy> { value: T }    // One occurrence
 ```
 
-`#[cfg(any(test, feature = "extra"))]` 包裹的 `mod maybe_production { fn bad_mod<T: Copy>() {} }`
-**不豁免**——`test` 强制为 false 后 `any(...)` 仍可能为真（`feature = "extra"` 可达），因此计入生产代码。
+A `mod maybe_production { fn bad_mod<T: Copy>() {} }` guarded by `#[cfg(any(test, feature = "extra"))]`
+is **not exempt**: after fixing `test` to false, `any(...)` can still be true through `feature = "extra"`, so it counts as production code.
 
-### 符合（GOOD）
+### Compliant (GOOD)
 
 ```rust
 fn clean<T>() {}
@@ -47,21 +47,21 @@ struct Item<T> where T: Copy {}
 impl<T> Item<T> where T: Copy {}
 fn return_opaque() -> impl Iterator<Item = u8> { todo!() }
 #[cfg(test)]
-mod tests { fn ignored<T: Copy>() {} }   // 测试代码被掩码，不查
+mod tests { fn ignored<T: Copy>() {} }   // Test code is masked and not checked.
 ```
 
-## GEN002 — 参数位置的 `impl Trait`
+## GEN002 - Argument-position `impl Trait`
 
-> message：`inline impl Trait is forbidden; introduce a named generic parameter and move the bound to a where clause`
+> Message: `inline impl Trait is forbidden; introduce a named generic parameter and move the bound to a where clause`
 
-### 触发条件
+### Trigger conditions
 
-tree-sitter 的 `abstract_type` 节点（即 `impl Trait` 语法）**不在返回值位置**。
-返回值位置通过向上穿过 `bounded_type` 父节点链、检查节点是否是父声明的 `return_type` 字段来判断。
-参数位置、`let` 绑定、类型别名、以及其他任何非返回上下文都触发。
-`impl Trait` 包在引用里（`&(impl EffectDevelop + Sync)`）仍能检测到——无论嵌套多深都会穿过 `bounded_type` 链。
+A tree-sitter `abstract_type` node (`impl Trait` syntax) is **not in return position**.
+Return position is determined by walking up the `bounded_type` parent chain and checking whether the node is the enclosing declaration's `return_type` field.
+Arguments, `let` bindings, type aliases, and all other non-return contexts trigger the rule.
+References wrapping `impl Trait` (`&(impl EffectDevelop + Sync)`) are still detected; nested `bounded_type` chains are traversed.
 
-### 违规（BAD）—— 2 处
+### Violations (BAD) - Two occurrences
 
 ```rust
 fn bad_impl_trait(develop: &(impl EffectDevelop + Sync), other: impl Other) {}
@@ -69,24 +69,24 @@ fn bad_impl_trait(develop: &(impl EffectDevelop + Sync), other: impl Other) {}
 //                 GEN002 #1                             GEN002 #2
 ```
 
-### 符合（GOOD）—— 返回值位置允许
+### Compliant (GOOD) - Return position is allowed
 
 ```rust
 fn return_opaque() -> impl Iterator<Item = u8> { todo!() }
 ```
 
-## GEN003 — 重复 where predicate
+## GEN003 - Repeated where predicate
 
-> message：`where predicate for {left} is repeated; merge all bounds for {left} into one predicate`
+> Message: `where predicate for {left} is repeated; merge all bounds for {left} into one predicate`
 
-### 触发条件
+### Trigger conditions
 
-遍历所有 `where_clause`，读取其中每个 `where_predicate` 的 `left` 字段。
-同一个子句内，完全相同的 `left` 第一次出现合法，第二次及以后每条分别报告。
-检查不依赖外层声明类型，因此函数、类型、trait、`impl` 和关联项中的 `where` 都覆盖。
-类型参数、生命周期、关联类型和其他复杂类型主体统一处理；不同 `where` 子句互不影响。
+Visit every `where_clause` and read the `left` field of each `where_predicate`.
+Within a clause, the first occurrence of an exact `left` is valid; every subsequent occurrence is reported separately.
+The check is independent of the enclosing declaration kind, covering functions, types, traits, impls, and associated items.
+Type parameters, lifetimes, associated types, and other complex subjects are handled uniformly; separate `where` clauses do not affect each other.
 
-### 违规（BAD）
+### Violations (BAD)
 
 ```rust
 impl<L> Step<L> for Repo
@@ -96,7 +96,7 @@ where
 {}
 ```
 
-### 符合（GOOD）
+### Compliant (GOOD)
 
 ```rust
 impl<L> Step<L> for Repo
@@ -111,15 +111,15 @@ where
 {}
 ```
 
-## GEN004 — trait 定义处的 call-site 约束
+## GEN004 - Call-site bounds in trait definitions
 
-> message：`trait {trait_name} constrains {bound}; move this bound to the call site`
+> Message: `trait {trait_name} constrains {bound}; move this bound to the call site`
 
-`Clone`、`Send`、`Sync`、`'static` 是调用方能力，而非 trait 本身的契约。它们不得出现在
-trait 的 supertrait、泛型参数、`where` 子句、关联类型或 trait method 声明中；每一个出现的
-bound 分别报一处 `GEN004`。trait 之外的函数、`impl` 等 call site 可以正常使用这些约束。
+`Clone`, `Send`, `Sync`, and `'static` express caller requirements rather than the trait's contract. They must not appear in
+supertraits, generic parameters, `where` clauses, associated types, or method declarations within a trait. Each bound
+reports a separate `GEN004`. Functions, impls, and other call sites outside traits may use these bounds normally.
 
-### 违规（BAD）
+### Violations (BAD)
 
 ```rust
 trait Worker: Clone + Send + Sync + 'static {
@@ -131,7 +131,7 @@ trait Worker: Clone + Send + Sync + 'static {
 }
 ```
 
-### 符合（GOOD）
+### Compliant (GOOD)
 
 ```rust
 trait Worker {
@@ -147,10 +147,10 @@ where
 }
 ```
 
-## 配置
+## Configuration
 
-| 键 | 说明 | 默认 |
+| Key | Description | Default |
 | --- | --- | --- |
-| `exclude_files` | 相对 root 的路径列表，精确命中即整文件跳过 | `[]` |
+| `exclude_files` | Paths relative to root; exact matches skip the entire file | `[]` |
 
-`defaults.toml` 里没有 `[generic-where]` 段，且 checker 不使用 `merged()`；`config=None` 时不排除任何文件。
+There is no `[generic-where]` section in `defaults.toml`, and this checker does not use `merged()`; `config=None` excludes no files.

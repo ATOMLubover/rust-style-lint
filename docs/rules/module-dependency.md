@@ -1,33 +1,33 @@
 # module-dependency
 
-> 强制 Rust 模块依赖"向下或平级"（downward-or-across），拒绝反向依赖和循环依赖。
-> 代码：`MOD001`（向上依赖）、`MOD002`（循环依赖）｜ `--fix`：不支持（仅检测）
+> Enforce downward-or-across Rust module dependencies; reject upward dependencies and cycles.
+> Codes: `MOD001` (upward dependency), `MOD002` (cyclic dependency) | `--fix`: unsupported (check only)
 
-## 目标
+## Goal
 
-模块层级是一棵树（根是 crate 根）。一条引用边（一个模块用到另一个模块）可以**向下**（依赖更深的后代）
-或**平级**（依赖同级/更低层级的模块），但**禁止严格向上**依赖祖先模块。更低的模块不得依赖它的祖先。
+The module hierarchy is a tree rooted at the crate root. A reference edge (one module using another) may point **downward** to a deeper descendant
+or **across** to a sibling or lower-level module, but must not point **strictly upward** to an ancestor. A lower module must not depend on its ancestors.
 
-具体来说，给定 `parent` 和 `parent::child`：
+For `parent` and `parent::child`:
 
-- `parent` 用到 `parent::child` 的东西 → 允许（向下）。
-- `parent::child::a` 用到 `parent::child::b` 的东西 → 允许（平级）。
-- `parent::child` 用到 `parent` 的东西 → **禁止**，报 `MOD001`。
+- `parent` uses something from `parent::child` -> allowed (downward).
+- `parent::child::a` uses something from `parent::child::b` -> allowed (across).
+- `parent::child` uses something from `parent` -> **forbidden**, reports `MOD001`.
 
-## MOD001 — 向上依赖
+## MOD001 - Upward dependency
 
-> message：`{source} must not depend only upward on strict ancestor {target}; reference: `{reference}``
+> Message: `{source} must not depend only upward on strict ancestor {target}; reference: `{reference}``
 
-当模块 A 依赖模块 B，而 B 是 A 在模块树中的**严格祖先**（`len(B) < len(A)` 且 `A[:len(B)] == B`）时触发。
-三种边来源都会检查：
+Triggers when module A depends on module B and B is A's **strict ancestor** in the module tree (`len(B) < len(A)` and `A[:len(B)] == B`).
+All three edge sources are checked:
 
-1. `use` 声明
-2. 非 use 代码里的限定路径（`scoped_identifier` / `scoped_type_identifier`）
-3. 外层属性参数里内嵌的路径（如 `#[allow(crate::parent::lint)]`，正则只匹配 `crate::` / `self::` / `super::` 开头）
+1. `use` declarations.
+2. Qualified paths outside `use` declarations (`scoped_identifier` / `scoped_type_identifier`).
+3. Paths embedded in outer attribute arguments (such as `#[allow(crate::parent::lint)]`; the regex only matches `crate::`, `self::`, or `super::` prefixes).
 
-### 违规（BAD）
+### Violations (BAD)
 
-`src/parent/child.rs` —— 子模块向上依赖父模块（6 处）：
+`src/parent/child.rs` - Child depending upward on its parent (six occurrences):
 
 ```rust
 use super::Owner as ParentOwner;
@@ -38,7 +38,7 @@ fn qualified(_: crate::parent::Owner) {}
 #[allow(crate::parent::lint)] struct Attributed;
 ```
 
-`src/parent/impls.rs` —— 另一种向上依赖：
+`src/parent/impls.rs` - Another upward dependency:
 
 ```rust
 use super::Owner;
@@ -48,12 +48,12 @@ impl Trait for Owner {
 }
 ```
 
-- `impl Trait for Owner` 头里的 `Owner` 被豁免（见下方豁免 2），但 `use_again` 函数体里的
-  `Option<Owner>` 是第 7 处向上依赖。
+- `Owner` in the `impl Trait for Owner` header is exempt (see exemption 2 below), but
+  `Option<Owner>` in the `use_again` function body is the seventh upward dependency.
 
-### 符合（GOOD）
+### Compliant (GOOD)
 
-`src/parent/child.rs` —— 子依赖平级兄弟 `parent::shared`：
+`src/parent/child.rs` - Child depending on sibling `parent::shared`:
 
 ```rust
 use super::shared::Helper;
@@ -61,7 +61,7 @@ pub struct Child;
 fn helper(_: Helper) {}
 ```
 
-`src/parent.rs`：
+`src/parent.rs`:
 
 ```rust
 pub struct Owner;
@@ -72,7 +72,7 @@ use self::child::Child;
 fn child(_: Child) {}
 ```
 
-`src/lib.rs`：
+`src/lib.rs`:
 
 ```rust
 mod parent;
@@ -82,14 +82,14 @@ mod part_impl;
 mod tests;
 ```
 
-## MOD002 — 循环依赖
+## MOD002 - Cyclic dependency
 
-> message：`cyclic module dependency {source} -> {target} in [{cycle members}]`
+> Message: `cyclic module dependency {source} -> {target} in [{cycle members}]`
 
-对所有收集到的依赖边建图，用 Tarjan 强连通分量算法检测。任何包含超过一个模块的 SCC 都是环。
-环内每条边（源和目标都属于该 SCC）各报一条 `MOD002`。
+Build a graph from all collected dependency edges and detect strongly connected components with Tarjan's algorithm. Every SCC containing more than one module is a cycle.
+Each edge inside the cycle (both source and target belong to that SCC) reports one `MOD002`.
 
-### 违规（BAD）
+### Violations (BAD)
 
 ```rust
 // src/lib.rs
@@ -110,63 +110,63 @@ use crate::a::A;
 pub struct C(A);
 ```
 
-`a -> b -> c -> a`，三条边，报 3 条 `MOD002`。
+`a -> b -> c -> a` contains three edges and reports three `MOD002` diagnostics.
 
 ## MOD001 vs MOD002
 
 | | MOD001 | MOD002 |
 | --- | --- | --- |
-| 是什么 | 单条向上依赖 | 参与循环 |
-| 触发 | 依赖边本身指向严格祖先，无论有没有更大的环 | 边位于多模块 SCC 内 |
-| 关系 | — | 一条边既向上又在环里时，会同时报 MOD001 和 MOD002 |
+| Property | Single upward dependency | Cycle participation |
+| Trigger | The edge points to a strict ancestor, whether or not a larger cycle exists | The edge is within a multi-module SCC |
+| Relationship | - | An edge that is both upward and cyclic reports both MOD001 and MOD002 |
 
-## MOD003 — 重名定义（警告，不失败）
+## MOD003 - Duplicate definitions (warning, does not fail)
 
-> message：`duplicate {type alias|struct|trait} name `{name}` defined in {modules}`
+> Message: `duplicate {type alias|struct|trait} name `{name}` defined in {modules}`
 
-扫描全部生产模块，收集模块级 `type` 别名、`struct`、`trait` 定义。同一名字在**两个或更多不同模块**
-里各定义一次时，每个定义位置各报一条 `MOD003`。比如父模块 `engine` 定义了 `pub type AgentEngineResult`，
-子模块 `engine::lifecycle` 又私有定义 `type AgentEngineResult` 覆盖它——这会报两条 `MOD003` 警告。
+Scan all production modules and collect module-level `type` aliases, structs, and traits. When the same name is defined in **two or more distinct modules**,
+report `MOD003` at each definition. For example, a parent module `engine` defining `pub type AgentEngineResult`
+and its child `engine::lifecycle` privately defining `type AgentEngineResult` to shadow it produce two `MOD003` warnings.
 
-**`MOD003` 是 `level="warning"`，只打印、不判失败**（runner 只对 `error` 级违规返回非 0）。
-它提示命名冲突/遮蔽是个坏味道，但能编译，所以不阻塞。
+**`MOD003` uses `level="warning"` and does not fail the run**: the runner returns nonzero only for error-level violations.
+It flags naming collisions and shadowing as undesirable but does not block otherwise compilable code.
 
-test 模块（`prefixes` 命中）里的定义不计入。
+Definitions in test modules (matching `prefixes`) are not counted.
 
-## 路径如何解析（super / self / crate）
+## Path resolution (super / self / crate)
 
-- `crate::` 或 crate 名（从 `Cargo.toml` 的 name 读取）→ 相对 crate 根 `()` 解析。
-- `self::` → 相对当前模块。
-- `super::` → 相对当前模块的父级；`super::super::` 逐级上弹。
-- 顶层模块名（首段命中已知根级模块）→ 视为 `crate::` 前缀。
-- 无法识别（外部 crate 名 / 未知标识符）→ 不产生边，直接忽略。
+- `crate::` or the crate name (read from `Cargo.toml`) -> resolve relative to crate root `()`.
+- `self::` -> relative to the current module.
+- `super::` -> relative to the parent; `super::super::` climbs one level per segment.
+- A top-level module name (first segment matches a known root module) -> treat as prefixed with `crate::`.
+- Unrecognized paths (external crate names / unknown identifiers) -> produce no edge and are ignored.
 
-`use` 树展开时：`self` 折叠进当前前缀，`*` 通配符展开，`as` 别名跟踪用于纯 impl 头过滤。
+When expanding a `use` tree, fold `self` into the current prefix, expand `*`, and track `as` aliases for pure-impl-header filtering.
 
-## 模块路径如何计算
+## Computing module paths
 
-**文件路径 → 模块元组**（`file_module`）：
+**File path -> module tuple** (`file_module`):
 
-| 文件 | 模块路径 |
+| File | Module path |
 | --- | --- |
-| `src/lib.rs` / `src/main.rs`（顶层） | `()`（crate 根） |
+| `src/lib.rs` / `src/main.rs` (top level) | `()` (crate root) |
 | `src/foo.rs` | `("foo",)` |
 | `src/foo/bar.rs` | `("foo", "bar")` |
-| `src/foo/mod.rs` | `("foo",)`（去掉 `mod.rs`） |
+| `src/foo/mod.rs` | `("foo",)` (remove `mod.rs`) |
 
-**内联模块**：从 AST 节点向上找每个带 `body` 的 `mod_item`，名字前置。
+**Inline modules**: walk upward from the AST node, prepending the name of each `mod_item` with a `body`.
 
-## 豁免（不产生违规的边）
+## Exemptions (edges that do not report violations)
 
-1. **`#[cfg(test)]` 相关代码**：受 `cfg(test)`（或等价条件）保护的条目不收集边。用 `CfgParser` 把 `test` 强制为 `False`，只有所有赋值都为 `False` 才算 test-only。
-2. **纯 impl 头引用**：限定路径节点位于 `impl_item` 的 trait / self-type 位置（`impl Trait for MyType`）时豁免。但该豁免**不适用于 `use` 边**——use 边有单独的豁免：`alias_is_pure_impl()` 检查导入别名唯一的使用位置是否全在 impl 头内，是则整条 use 边豁免。
-3. **自引用**：`target == source` 的边跳过。
-4. **无法解析的路径**：`absolute_path()` 或 `target_module()` 返回 `None` 时不产生边。
+1. **`#[cfg(test)]` code**: items guarded by `cfg(test)` or an equivalent condition contribute no edges. `CfgParser` fixes `test` to `False`; an item is test-only only if every assignment is `False`.
+2. **Pure impl-header references**: qualified paths in the trait / self-type positions of `impl_item` (`impl Trait for MyType`) are exempt. This does **not** directly exempt `use` edges: `alias_is_pure_impl()` separately checks whether every use of the imported alias is in an impl header, exempting the entire use edge if so.
+3. **Self references**: skip edges where `target == source`.
+4. **Unresolved paths**: no edge is produced when `absolute_path()` or `target_module()` returns `None`.
 
-## 配置
+## Configuration
 
-| 键 | 说明 | 默认 |
+| Key | Description | Default |
 | --- | --- | --- |
-| `exclude_files` | 相对 root 的路径列表，命中的文件整文件跳过（不产生边、不会违规） | `[]` |
+| `exclude_files` | Paths relative to root; matching files are skipped entirely (no edges or violations) | `[]` |
 
-`defaults.toml` 里没有 `[module-dependency]` 段；项目配置的 `exclude_files` 即全部。
+There is no `[module-dependency]` section in `defaults.toml`; the project's `exclude_files` list is complete.

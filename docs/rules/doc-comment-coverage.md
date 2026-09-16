@@ -1,54 +1,57 @@
 # doc-comment-coverage
 
-> 用户自定义标识符必须带指定风格的注释：公开项要外层 doc 注释（`///` / `/**`），私有项要普通注释（`//` / `/*`）。
-> 代码：`DOC001` ｜ `--fix`：不支持（仅检测）
+> User-defined identifiers require the appropriate comment style: outer doc comments (`///` / `/**`) for public items and regular comments (`//` / `/*`) for private items.
+> Code: `DOC001` | `--fix`: unsupported (check only)
 
-## 目标
+## Goal
 
-扫描 `src/` 下所有 Rust 源文件，报告没有紧邻前置注释的声明：
+Scan all Rust source files under `src/` and report declarations without the required preceding comment:
 
-- **公开项**需要外层 doc 注释（`///` 或 `/**`）；
-- **私有项**需要普通注释（`//` 或 `/*`）。
+- **Public items** require an outer doc comment (`///` or `/**`).
+- **Private items** require a regular comment (`//` or `/*`).
 
-## 被覆盖的声明种类（14 种 AST 节点）
+## Covered declarations (14 AST node kinds)
 
-模块级项：模块声明、函数、struct、enum、trait、类型别名、const、static、宏定义、union。
-trait 成员：trait 定义内的关联函数、类型别名、常量（隐式公开）。
-enum variant：每个变体（隐式公开）。
-固有方法：impl 块里的公开函数。
+Module-level items: modules, functions, structs, enums, traits, type aliases, constants, statics, macro definitions, and unions.
+Trait members: associated functions, type aliases, and constants (implicitly public).
+Enum variants: every variant (implicitly public).
+Inherent methods: public functions in impl blocks.
 
-节点类型清单：`associated_type`、`const_item`、`enum_item`、`enum_variant`、`field_declaration`、
-`function_item`、`function_signature_item`、`macro_definition`、`mod_item`、`static_item`、
-`struct_item`、`trait_item`、`type_item`、`union_item`。
+Node kinds: `associated_type`, `const_item`, `enum_item`, `enum_variant`, `field_declaration`,
+`function_item`, `function_signature_item`, `macro_definition`, `mod_item`, `static_item`,
+`struct_item`, `trait_item`, `type_item`, `union_item`.
 
-## DOC001 — 缺失要求的注释
+## DOC001 - Missing required comment
 
-> message（动态拼接）：`{visibility} {declaration type} '{name}' is missing a {comment_kind}`
-> 如：`public function item 'undocumented_fn' is missing a doc comment`
-> `comment_kind`：公开项为 `doc comment`，私有项为 `regular comment`
+> Message (assembled dynamically): `{visibility} {declaration type} '{name}' is missing a {comment_kind}`
+> Example: `public function item 'undocumented_fn' is missing a doc comment`
+> `comment_kind`: `doc comment` for public items; `regular comment` for private items.
 
-### 触发条件（全部满足）
+The diagnostic points to the insertion location: when attributes precede an item, it reports the first attribute's starting line. Insert the comment above the entire attribute group.
+Without attributes, it reports the declaration's starting line rather than the identifier's line. Multiline attributes and comments between attributes do not change this rule.
 
-1. 文件在 `src/` 下且未被排除（见配置）。
-2. 节点属于上述 14 种之一。
-3. 不是测试项（`#[test]`、`#[tokio::test]`、`rstest` 任意位置出现都跳过）。
-4. 不是 `src/main.rs` 里的 `main` 函数。
-5. 节点有 `name` 字段。
-6. 缺少要求的前置注释：
+### Trigger conditions (all required)
 
-   - **公开项**：跳过 `attribute_item` 后往回看，第一个非属性兄弟必须是 `///` 开头
-     的 `line_comment`，或 `/**` 开头的 `block_comment`。
-   - **私有项**：第一个非属性兄弟必须是 `//` 开头（但**不是** `///`）且内容非空的 `line_comment`，
-     或 `/*` 开头（但**不是** `/**`、**不是** `/*!`）且内容非空的 `block_comment`。
-     裸 `//`（空内容）视为块分隔符，不算注释。
+1. The file is under `src/` and is not excluded (see configuration).
+2. The node is one of the 14 kinds above.
+3. The item is not a test (`#[test]`, `#[tokio::test]`, or an attribute containing `rstest`).
+4. The item is not the `main` function in `src/main.rs`.
+5. The node has a `name` field.
+6. The required preceding comment is missing:
 
-### 公开 vs 私有的判定
+   - **Public items**: scan backward, skipping `attribute_item` nodes. The first non-attribute sibling must be a `line_comment` starting with `///`
+     or a `block_comment` starting with `/**`.
+   - **Private items**: the first non-attribute sibling must be a nonempty `line_comment` starting with `//` (but **not** `///`),
+     or a nonempty `block_comment` starting with `/*` (but **not** `/**` or `/*!`).
+     A bare `//` with no content is a block separator and does not count as a comment.
 
-判为公开：带任何 `visibility_modifier`（`pub`、`pub(crate)` 等）；是 `enum_variant`；是外层 struct/enum/union
-带可见性修饰的 `field_declaration`；嵌套在 `trait_item` 祖先内。
-判为私有：在 `closure_expression` 或 `function_item` 祖先内（局部嵌套项）；且不满足任何公开条件。
+### Public versus private
 
-### 违规（BAD）—— 9 处公开项
+Public: any `visibility_modifier` (`pub`, `pub(crate)`, etc.); an `enum_variant`; a `field_declaration` whose enclosing struct/enum/union
+has a visibility modifier; or an item nested under a `trait_item` ancestor.
+Private: nested under a `closure_expression` or `function_item` ancestor (local items), without satisfying a public condition.
+
+### Violations (BAD) - Nine public items
 
 ```rust
 pub fn undocumented_fn() {}
@@ -74,17 +77,17 @@ pub fn still_undocumented() {}
 pub mod undocumented_mod;
 ```
 
-私有项错误用 `///` 也算违规：
+Using `///` on a private item also violates the rule:
 
 ```rust
-// BAD —— 2 处
+// BAD - Two violations
 fn uncommented_private_fn() {}
 
 /// A doc comment is not a private implementation comment.
 struct WronglyDocumentedPrivateStruct;
 ```
 
-### 符合（GOOD）—— 公开项
+### Compliant (GOOD) - Public items
 
 ```rust
 /// A documented public function.
@@ -115,7 +118,7 @@ pub const ANSWER: u32 = 42;
 pub mod documented_mod;
 ```
 
-私有项用普通注释：
+Private items use regular comments:
 
 ```rust
 // A documented implementation detail.
@@ -128,7 +131,7 @@ struct PrivateStruct;
 mod private_mod;
 ```
 
-doc 注释和项之间可以有属性（跳过 `attribute_item`）：
+Attributes may appear between the doc comment and the item (`attribute_item` nodes are skipped):
 
 ```rust
 /// Documented with an attribute in between.
@@ -136,20 +139,20 @@ doc 注释和项之间可以有属性（跳过 `attribute_item`）：
 pub struct Attributed;
 ```
 
-### 跳过的项
+### Skipped items
 
-| 条件 | 机制 |
+| Condition | Mechanism |
 | --- | --- |
-| `#[test]` / `#[tokio::test]` / `#[rstest::...]` 项 | `is_test_item()` 跳过 |
-| `src/main.rs` 里的 `main` 函数 | `is_main_in_main_rs()` 跳过 |
-| 内层 doc 注释（`//!`、`/*!`） | 它们记录的是外层模块，不是后续项；`/*!` 明确不算私有注释 |
-| 裸 `//`（空内容） | 视为块分隔符 |
-| 测试 fixture / 生成文件 | 按配置排除 |
+| `#[test]` / `#[tokio::test]` / `#[rstest::...]` items | Skipped by `is_test_item()` |
+| `main` function in `src/main.rs` | Skipped by `is_main_in_main_rs()` |
+| Inner doc comments (`//!`, `/*!`) | Document the enclosing module, not the following item; `/*!` does not count as a private comment |
+| Bare `//` with no content | Treated as a block separator |
+| Test fixtures / generated files | Excluded by configuration |
 
-## 配置
+## Configuration
 
-| 键 | 说明 | 默认 |
+| Key | Description | Default |
 | --- | --- | --- |
-| `exclude_segments` | 路径任一成分命中即跳过整个文件 | `["tests", "entity"]` |
-| `exclude_filename_prefixes` | 路径任一成分以某前缀开头即跳过 | `["test_"]` |
-| `exclude_filenames` | 精确文件名匹配即跳过 | `["schema.rs", "entity.rs"]` |
+| `exclude_segments` | Skip the file if any path segment matches | `["tests", "entity"]` |
+| `exclude_filename_prefixes` | Skip if any path segment starts with a listed prefix | `["test_"]` |
+| `exclude_filenames` | Skip exact filename matches | `["schema.rs", "entity.rs"]` |

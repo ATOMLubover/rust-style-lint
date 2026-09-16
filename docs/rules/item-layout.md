@@ -1,26 +1,26 @@
 # item-layout
 
-> 强制手写 Rust 源码里的声明与辅助函数顺序。
-> 代码：`LAYOUT001`–`LAYOUT004` ｜ `--fix`：不支持（仅检测）
+> Enforce declaration and helper function order in handwritten Rust source.
+> Codes: `LAYOUT001`-`LAYOUT004` | `--fix`: unsupported (check only)
 
-## 目标
+## Goal
 
-- impl 块必须紧跟其 struct 声明。
-- 固有 impl 必须先于 trait impl。
-- 私有函数必须排在所有公开函数之后。
-- 私有函数必须按首次调用顺序排列。
+- Impl blocks must immediately follow their struct declaration.
+- Inherent impls must precede trait impls.
+- Private functions must follow all public functions.
+- Private functions must follow first-call order.
 
-checker 递归进 `impl_item` 的 `body` 和 `mod_item` 的 `body`，每个嵌套容器独立检查。
+The checker recurses into `impl_item` and `mod_item` bodies, checking each nested container independently.
 
-## LAYOUT001 — impl 必须紧跟 struct 声明
+## LAYOUT001 - Impls must immediately follow their struct
 
-> message：`impl for {struct_name} must immediately follow its struct declaration`
+> Message: `impl for {struct_name} must immediately follow its struct declaration`
 
-一个 struct 有一个或多个 impl 块，但 struct 与第一个 impl 之间、或任意两个 impl 之间夹着其他命名项。
-所有 impl 块必须连续、紧贴 struct 之后。
+A struct has one or more impl blocks, but another named item separates the struct from its first impl or separates two impls.
+All impl blocks must be contiguous and immediately follow the struct.
 
 ```rust
-// BAD —— const 隔开了 struct 和 impl
+// BAD - A const separates the struct from its impl.
 pub struct Wrong;
 const SEPARATES_WRONG_IMPL: () = ();
 impl Default for Wrong { fn default() -> Self { Self } }
@@ -35,52 +35,52 @@ fn prepare() {}
 fn finish() {}
 ```
 
-## LAYOUT002 — 固有 impl 必须先于 trait impl
+## LAYOUT002 - Inherent impls must precede trait impls
 
-> message：`inherent impl for {struct_name} must precede its trait impls`
+> Message: `inherent impl for {struct_name} must precede its trait impls`
 
-struct 有多个 impl 块，某个无 trait 字段的固有 `impl` 出现在 trait impl **之后**。
-所有固有 impl 必须在所有 trait impl 之前（按源码顺序遍历，见到 trait impl 后任何后续固有 impl 都违规）。
+A struct has multiple impls, with an inherent impl (no trait field) appearing **after** a trait impl.
+All inherent impls must precede all trait impls; after encountering a trait impl in source order, every later inherent impl is a violation.
 
 ```rust
-// BAD —— trait 在前，固有在后
+// BAD - Trait impl before inherent impl
 impl Default for Wrong { fn default() -> Self { Self } }
 impl Wrong { fn create() {} }
 
-// GOOD —— 固有在前
+// GOOD - Inherent impl first
 impl Good { pub fn create() {} fn prepare() {} }
 impl Default for Good { fn default() -> Self { Self } }
 ```
 
-## LAYOUT003 — 私有函数必须排在所有公开函数之后
+## LAYOUT003 - Private functions must follow all public functions
 
-> message：`private functions must follow all public functions`
+> Message: `private functions must follow all public functions`
 
-容器内（模块、impl 体、任意出现函数的域），有私有函数的字节偏移早于最后一个公开函数。
-即公开函数的最大偏移 > 私有函数的最小偏移时触发。`#[cfg(test)]` 函数排除。
+Within a container (module, impl body, or any scope containing functions), a private function's byte offset precedes the last public function.
+The rule triggers when the maximum public function offset exceeds the minimum private function offset. `#[cfg(test)]` functions are excluded.
 
 ```rust
-// BAD —— 私有 second 在公开 run 之前
+// BAD - Private second precedes public run.
 fn second() {}
 /// Calls helpers in their required order.
 pub fn run() { first(); second(); }
 fn first() {}
 
-// GOOD —— 公开在前，私有在后
+// GOOD - Public functions first, private functions afterward.
 pub fn run() { prepare(); finish(); }
 fn prepare() {}
 fn finish() {}
 ```
 
-## LAYOUT004 — 私有函数按首次调用顺序
+## LAYOUT004 - Private functions follow first-call order
 
-> message：`private function {name} must follow first-call order; {earlier_name} is called earlier`
+> Message: `private function {name} must follow first-call order; {earlier_name} is called earlier`
 
-容器内私有函数未按首次调用位置排序。预期顺序：按容器内任何函数对每个私有函数的**首次调用字节位置**排序，
-平局按定义字节位置；从未被调用的函数取 `sys.maxsize` 排到末尾。
+Private functions in a container are not sorted by first-call position. The expected order uses the **byte position of the first call** to each private function from any function in that container,
+breaking ties by definition offset. Functions never called use `sys.maxsize` and go last.
 
 ```rust
-// BAD —— second 先定义，但 first 更早被调用
+// BAD - second is defined first, but first is called earlier.
 pub fn run() { first(); second(); }
 fn second() {}
 fn first() {}
@@ -88,30 +88,30 @@ fn first() {}
 // GOOD
 pub fn run() { first(); second(); }
 fn first() {}
-fn finish() {}   // 未被调用 → 排末尾
+fn finish() {}   // Never called -> place last.
 ```
 
-## 单 fixture 全命中（self-test 断言四种 code 全出）
+## One fixture triggering every code (self-test asserts all four)
 
 ```rust
 pub struct Wrong;
 const SEPARATES_WRONG_IMPL: () = ();
-impl Default for Wrong { fn default() -> Self { Self } }   // LAYOUT001（被 const 隔开）
-impl Wrong { fn create() {} }                              // LAYOUT002（固有在 trait 后）
+impl Default for Wrong { fn default() -> Self { Self } }   // LAYOUT001: separated by const
+impl Wrong { fn create() {} }                              // LAYOUT002: inherent after trait
 /// Runs the private helpers.
-fn second() {}                                             // LAYOUT003（私有无序）
+fn second() {}                                             // LAYOUT003: private function order
 /// Calls helpers in their required order.
 pub fn run() { first(); second(); }
 /// Runs before the second helper.
-fn first() {}                                              // LAYOUT004（second 应先于 first 定义）
+fn first() {}                                              // LAYOUT004: second should be defined before first
 ```
 
-预期 code 集合：`{LAYOUT001, LAYOUT002, LAYOUT003, LAYOUT004}`。
+Expected code set: `{LAYOUT001, LAYOUT002, LAYOUT003, LAYOUT004}`.
 
-## 配置
+## Configuration
 
-| 键 | 说明 | 默认 |
+| Key | Description | Default |
 | --- | --- | --- |
-| `exclude_files` | 相对 root 的路径列表，`==` 精确匹配即整文件跳过 | `[]` |
+| `exclude_files` | Paths relative to root; exact `==` matches skip the entire file | `[]` |
 
-`defaults.toml` 里没有 `[item-layout]` 段，且 checker 不使用 `merged()`；`exclude_files` 纯由项目级提供。
+There is no `[item-layout]` section in `defaults.toml`, and the checker does not use `merged()`; `exclude_files` comes entirely from project configuration.

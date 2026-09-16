@@ -3,8 +3,8 @@
 Prefer inference, and turbofish when a type must be pinned explicitly::
 
     let x = expr.collect::<Vec<_>>();       // GOOD
-    let y = resolver.parse::<u32>()?;       // GOOD — turbofish on the call
-    let z: u32 = expr.parse()?;             // BAD — type hint on the let binding
+    let y = resolver.parse::<u32>()?;       // GOOD - turbofish on the call
+    let z: u32 = expr.parse()?;             // BAD - type hint on the let binding
 
 The rule is uniform: no `let x: T = value` is allowed. When the value's type
 cannot be inferred, supply it as turbofish on the value's generic call instead
@@ -21,7 +21,7 @@ from pathlib import Path
 import tree_sitter
 import tree_sitter_rust
 
-from ..base import Violation, source_files
+from ..base import Violation, print_rule_guidance, source_files
 from ..production_source import production_source
 
 
@@ -152,6 +152,8 @@ def main() -> int:
             "(auto-editing can change the inferred type or break compilation)",
             file=sys.stderr,
         )
+
+    print_rule_guidance("no-type-hint", violations)
 
     for violation in violations:
         print(f"{violation.path}:{violation.line}: {violation.code}: {violation.message}", file=sys.stderr)

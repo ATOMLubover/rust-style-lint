@@ -37,7 +37,7 @@ from pathlib import Path
 import tree_sitter
 import tree_sitter_rust
 
-from ..base import Violation, source_files, source_root
+from ..base import Violation, print_rule_guidance, source_files, source_root
 from ..config import merged
 from ..production_source import production_source
 
@@ -213,7 +213,7 @@ def _is_cfg_test_attr(attr: tree_sitter.Node, source: bytes) -> bool:
 
 
 def inside_test_mod(node: tree_sitter.Node, source: bytes) -> bool:
-    """Return True when *node* is inside a ``#[cfg(test)] mod …`` block."""
+    """Return True when *node* is inside a ``#[cfg(test)] mod ...`` block."""
     current = node.parent
 
     while current is not None:
@@ -426,7 +426,7 @@ def _call_target_has_word(func_node: tree_sitter.Node, source: bytes, word: str)
         return False
 
     if func_node.type == "field_expression":
-        # obj.method() — only check the object (receiver), not the method name.
+        # obj.method() - only check the object (receiver), not the method name.
         # Method names like `by_error` are look-up methods, not Error constructors.
         obj = func_node.child_by_field_name("value")
 
@@ -582,7 +582,7 @@ def check_identifier_name(
 
 
 # ---------------------------------------------------------------------------
-# tree walking — collect definition-site names with context
+# tree walking - collect definition-site names with context
 # ---------------------------------------------------------------------------
 
 def collect_definition_names(
@@ -656,7 +656,7 @@ def collect_definition_names(
                 ):
                     names.append((text(source, child), child, CTX_MACRO_FIELD, False, current_module))
 
-    # --- let binding (pattern → identifier, with Error-type detection) ---
+    # --- let binding (pattern -> identifier, with Error-type detection) ---
     if node.type == "let_declaration":
         pattern = node.child_by_field_name("pattern")
 
@@ -778,7 +778,7 @@ def check_file(
     source = production_source(path, root)
     violations: list[Violation] = []
 
-    # entire file is a test module — skip identifier checks
+    # entire file is a test module - skip identifier checks
     if is_test_module_file(path, test_module_set):
         return violations
 
@@ -903,7 +903,7 @@ def self_test() -> int:
         src.mkdir()
         fixture = src / "fixture.rs"
 
-        # ── valid: nothing forbidden ────────────────────────────────────
+        # -- valid: nothing forbidden ------------------------------------
 
         fixture.write_text(
             "fn process_input(data: &[u8]) -> Vec<u8> {\n"
@@ -954,7 +954,7 @@ def self_test() -> int:
 
         ignored_file.unlink()
 
-        # ── test module is skipped ──────────────────────────────────────
+        # -- test module is skipped --------------------------------------
 
         fixture.write_text(
             "#[cfg(test)]\n"
@@ -971,7 +971,7 @@ def self_test() -> int:
             print("self-test: test module was not skipped", file=sys.stderr)
             return 1
 
-        # ── error → always forbidden (FBD003) ───────────────────────────
+        # -- error -> always forbidden (FBD003) ---------------------------
 
         fixture.write_text(
             "fn handle_error() {}\n"               # fn name
@@ -998,7 +998,7 @@ def self_test() -> int:
             print("self-test FBD003: wrong code", file=sys.stderr)
             return 1
 
-        # ── error in structured macro field keys ────────────────────────
+        # -- error in structured macro field keys ------------------------
 
         fixture.write_text(
             "fn process() {\n"
@@ -1021,7 +1021,7 @@ def self_test() -> int:
                 print(f"  {violation}", file=sys.stderr)
             return 1
 
-        # ── err in fn names: only _err suffix allowed ────────────────────
+        # -- err in fn names: only _err suffix allowed --------------------
 
         fixture.write_text(
             "fn parse_err() {}     // allowed (_err suffix)\n"
@@ -1031,7 +1031,7 @@ def self_test() -> int:
         )
 
         violations = check(root)
-        # parse_err → allowed, err_handler → FBD004, do_err → allowed, err → FBD004
+        # parse_err -> allowed, err_handler -> FBD004, do_err -> allowed, err -> FBD004
 
         if len(violations) != 2:
             print(
@@ -1056,7 +1056,7 @@ def self_test() -> int:
             print("self-test FBD004-fn: bare err fn not flagged", file=sys.stderr)
             return 1
 
-        # ── err in local vars: err_ prefix + not Error type = allowed ────
+        # -- err in local vars: err_ prefix + not Error type = allowed ----
 
         fixture.write_text(
             "fn process() {\n"
@@ -1068,7 +1068,7 @@ def self_test() -> int:
         )
 
         violations = check(root)
-        # err → FBD004, parse_err → FBD004
+        # err -> FBD004, parse_err -> FBD004
 
         if len(violations) != 2:
             print(
@@ -1079,7 +1079,7 @@ def self_test() -> int:
                 print(f"  {violation}", file=sys.stderr)
             return 1
 
-        # ── err in local vars: Error type instantiation → always forbidden
+        # -- err in local vars: Error type instantiation -> always forbidden
 
         fixture.write_text(
             "struct SomeError;\n"
@@ -1091,7 +1091,7 @@ def self_test() -> int:
         )
 
         violations = check(root)
-        # err_code (Error type) → FBD004, err (Error type) → FBD004, parse_err (Error type) → FBD004
+        # err_code (Error type) -> FBD004, err (Error type) -> FBD004, parse_err (Error type) -> FBD004
 
         if len(violations) != 3:
             print(
@@ -1102,7 +1102,7 @@ def self_test() -> int:
                 print(f"  {violation}", file=sys.stderr)
             return 1
 
-        # ── err: Error type from function call ──────────────────────────
+        # -- err: Error type from function call --------------------------
 
         fixture.write_text(
             "struct SomeError;\n"
@@ -1115,8 +1115,8 @@ def self_test() -> int:
         )
 
         violations = check(root)
-        # err_msg → FBD004 (Error type via SomeError::new())
-        # create_error (fn def) → FBD003
+        # err_msg -> FBD004 (Error type via SomeError::new())
+        # create_error (fn def) -> FBD003
 
         if len(violations) != 2:
             print(
@@ -1127,7 +1127,7 @@ def self_test() -> int:
                 print(f"  {violation}", file=sys.stderr)
             return 1
 
-        # ── err: Error type from struct expression ──────────────────────
+        # -- err: Error type from struct expression ----------------------
 
         fixture.write_text(
             "struct ParseError { code: u32 }\n"
@@ -1137,7 +1137,7 @@ def self_test() -> int:
         )
 
         violations = check(root)
-        # err_info → FBD004, ParseError → NOT checked (type name)
+        # err_info -> FBD004, ParseError -> NOT checked (type name)
 
         if len(violations) != 1:
             print(
@@ -1148,7 +1148,7 @@ def self_test() -> int:
                 print(f"  {violation}", file=sys.stderr)
             return 1
 
-        # ── err: Error type inside if/match/closure/field-call ──────────
+        # -- err: Error type inside if/match/closure/field-call ----------
 
         fixture.write_text(
             "struct SomeError;\n"
@@ -1165,10 +1165,10 @@ def self_test() -> int:
         )
 
         violations = check(root)
-        # err_val (err_ prefix + Error type via if) → FBD004
-        # err_out (err_ prefix + Error type via match) → FBD004
-        # err_fn (err_ prefix + Error type via closure) → FBD004
-        # create_error fn def (in impl Helper) → FBD003
+        # err_val (err_ prefix + Error type via if) -> FBD004
+        # err_out (err_ prefix + Error type via match) -> FBD004
+        # err_fn (err_ prefix + Error type via closure) -> FBD004
+        # create_error fn def (in impl Helper) -> FBD003
 
         if len(violations) != 4:
             print(
@@ -1192,7 +1192,7 @@ def self_test() -> int:
             )
             return 1
 
-        # ── parameter with err ──────────────────────────────────────────
+        # -- parameter with err ------------------------------------------
 
         fixture.write_text(
             "fn process(err_code: u32) {}\n"        # allowed (err_ prefix, not Error type)
@@ -1201,7 +1201,7 @@ def self_test() -> int:
         )
 
         violations = check(root)
-        # err → FBD004, parse_err → FBD004
+        # err -> FBD004, parse_err -> FBD004
 
         if len(violations) != 2:
             print(
@@ -1212,7 +1212,7 @@ def self_test() -> int:
                 print(f"  {violation}", file=sys.stderr)
             return 1
 
-        # ── err in const / static → forbidden ──────────────────────────
+        # -- err in const / static -> forbidden --------------------------
 
         fixture.write_text(
             "const ERR_CODE: u32 = 0;\n"
@@ -1220,7 +1220,7 @@ def self_test() -> int:
         )
 
         violations = check(root)
-        # ERR_CODE → FBD004, GLOBAL_ERR → FBD004
+        # ERR_CODE -> FBD004, GLOBAL_ERR -> FBD004
 
         if len(violations) != 2:
             print(
@@ -1231,7 +1231,7 @@ def self_test() -> int:
                 print(f"  {violation}", file=sys.stderr)
             return 1
 
-        # ── other forbidden segments ────────────────────────────────────
+        # -- other forbidden segments ------------------------------------
 
         fixture.write_text(
             "fn parse_result() {}\n"
@@ -1258,7 +1258,7 @@ def self_test() -> int:
                 print(f"  {violation}", file=sys.stderr)
             return 1
 
-        # ── FBD code coverage ───────────────────────────────────────────
+        # -- FBD code coverage -------------------------------------------
 
         fixture.write_text(
             "fn f1(result: ()) {}\n"         # FBD001
@@ -1287,7 +1287,7 @@ def self_test() -> int:
             missing = expected_codes - codes
             extra = codes - expected_codes
             print(
-                f"self-test: code coverage — missing {missing}, extra {extra}",
+                f"self-test: code coverage - missing {missing}, extra {extra}",
                 file=sys.stderr,
             )
             return 1
@@ -1355,6 +1355,8 @@ def main() -> int:
             section,
         )
     ]
+
+    print_rule_guidance("forbidden-identifiers", violations)
 
     for violation in violations:
         print(f"{violation.path}:{violation.line}: {violation.code}: {violation.message}", file=sys.stderr)

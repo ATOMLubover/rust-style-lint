@@ -86,9 +86,9 @@ code = "FBD004"
 contexts = ["function", "let", "parameter", "const", "static", "enum_variant"]
 function_allowed_position = "suffix"
 local_allowed_position = "prefix"
-function_message = "'{name}' — 'err' in function names only allowed as '_err' suffix"
-local_message = "'{name}' — 'err' in local variables only allowed as 'err_' prefix on non-Error types; explicit Error instantiation is forbidden"
-other_message = "'{name}' — 'err' is forbidden in this context"
+function_message = "'{name}' - 'err' in function names only allowed as '_err' suffix"
+local_message = "'{name}' - 'err' in local variables only allowed as 'err_' prefix on non-Error types; explicit Error instantiation is forbidden"
+other_message = "'{name}' - 'err' is forbidden in this context"
 
 [use-style]
 traits = [

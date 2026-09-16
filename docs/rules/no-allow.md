@@ -1,42 +1,42 @@
 # no-allow
 
-> 禁止任何 lint 抑制属性：`#[allow(...)]` / `#[expect(...)]`。
-> 代码：`NO_ALLOW` ｜ `--fix`：不支持（仅检测）
+> Forbid all lint suppression attributes: `#[allow(...)]` / `#[expect(...)]`.
+> Code: `NO_ALLOW` | `--fix`: unsupported (check only)
 
-## 目标
+## Goal
 
-抑制（`allow` / `expect`）掩盖真实问题，并随着代码演化而腐烂。消除抑制的**唯一**途径是重构代码让 lint 停发：
+Suppressions (`allow` / `expect`) hide real problems and decay as code evolves. The **only** way to remove a suppression is to refactor the code so the lint no longer fires:
 
-- 未使用的条件编译导入 → 改成 `#[cfg(feature = "...")] use ...;`（swagger 宏属性里才用的类型）
-- `dead_code` → 删除死代码，或把确实要用的项标 `pub`
-- 函数参数太多 → 收进 struct / builder
-- 等等
+- Unused conditional imports -> use `#[cfg(feature = "...")] use ...;` for types used only in swagger macro attributes.
+- `dead_code` -> delete dead code, or mark genuinely needed items `pub`.
+- Too many function arguments -> group them in a struct / builder.
+- Apply the same principle to other lints.
 
-非抑制属性不受影响：`#[cfg(...)]`、`#[derive(...)]`、`#[cfg_attr(..., derive(...))]`、`#[deprecated]` 等照常。
+Other attributes are unaffected: `#[cfg(...)]`, `#[derive(...)]`, `#[cfg_attr(..., derive(...))]`, `#[deprecated]`, etc.
 
-## 触发
+## Trigger
 
-任意位置出现 `#[allow(...)]` 或 `#[expect(...)]` 即报，message 里带上被抑制的 lint 名。
+Any `#[allow(...)]` or `#[expect(...)]` triggers a diagnostic that includes the suppressed lint name.
 
 ```rust
-// BAD —— 抑制未使用的导入
+// BAD - Suppressing an unused import
 #[allow(unused_imports)]
 use crate::data::val::chapter_port::ExportChapterTranslationVal;
 
-// GOOD —— 只有 swagger 启用时才导入（宏属性里用到，未启用时不存在未使用问题）
+// GOOD - Import only when swagger is enabled; the macro attribute uses it in that configuration.
 #[cfg(feature = "swagger")]
 use crate::data::val::chapter_port::ExportChapterTranslationVal;
 
-// BAD —— 抑制死代码
+// BAD - Suppressing dead code
 #[allow(dead_code)]
 fn helper() {}
 
-// GOOD —— 删掉它，或让调用方真正使用它
+// GOOD - Delete it or make callers actually use it.
 ```
 
-## 实现
+## Implementation
 
-对每个 `.rs` 文件，用 tree-sitter 找出所有 `attribute_item`，正则匹配
-`#\[(allow|expect)\(...\)\]`。匹配到即报 `NO_ALLOW`。
+For each `.rs` file, use tree-sitter to find all `attribute_item` nodes and match
+`#\[(allow|expect)\(...\)\]` with a regular expression. Each match reports `NO_ALLOW`.
 
-**不可 fix**：`--fix` 是 no-op，必须手工重构消除。
+**Not fixable**: `--fix` is a no-op; refactor the code manually.

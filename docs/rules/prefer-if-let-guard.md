@@ -1,13 +1,13 @@
 # prefer-if-let-guard
 
-> 单个业务分支的 match 应该改写成 `if` / `if let` / `let ... else`。
-> 代码：`LET001` ｜ `--fix`：不支持（仅检测，建议手动改写）
+> Rewrite a match with a single business branch as `if`, `if let`, or `let ... else`.
+> Code: `LET001` | `--fix`: unsupported (check only; rewrite manually)
 
-## 目标
+## Goal
 
-一个 match 应该表达多个业务分支。当恰好一个分支做实际工作、其余分支都只是退场
-（`return`、`break`、`continue`、发散宏、或空体）时，这个 match 其实是单路径分发，
-用 guard 读起来更清楚。
+A match should express multiple business branches. When exactly one arm does actual work and all other arms only exit
+(`return`, `break`, `continue`, diverging macros, or empty bodies), the match represents a single execution path
+that is clearer as a guard.
 
 ```rust
 match value {
@@ -16,7 +16,7 @@ match value {
 }
 ```
 
-改写成：
+Rewrite as:
 
 ```rust
 let Some(x) = value else {
@@ -26,7 +26,7 @@ let Some(x) = value else {
 foo(x);
 ```
 
-如果恰好只有两个 arm，且一个 arm 发散、另一个 arm 为空，也应改成 `if let`：
+When there are exactly two arms, one diverging and one empty, use `if let` as well:
 
 ```rust
 match value {
@@ -41,7 +41,7 @@ if let Some(x) = value {
 }
 ```
 
-guard 全是空体时改成 `if let`：
+When all guard bodies are empty, use `if let`:
 
 ```rust
 match value {
@@ -50,7 +50,7 @@ match value {
 }
 ```
 
-改写成：
+Rewrite as:
 
 ```rust
 if let Some(x) = value {
@@ -58,7 +58,7 @@ if let Some(x) = value {
 }
 ```
 
-布尔字面量的两臂 match 不使用 `if let true/false`，直接改成普通条件：
+For a two-arm match on boolean literals, use a plain condition rather than `if let true/false`:
 
 ```rust
 match created {
@@ -71,64 +71,64 @@ if !created {
 }
 ```
 
-## LET001 — 单业务分支 match
+## LET001 - Match with a single business arm
 
-> message（发散 guard）：`match has a single business arm `{pattern}` and a diverging guard; prefer `let {pattern} = {scrutinee} else {{ ... }}` over a match whose only other arms bail out`
-> message（空 guard）：`match has a single business arm `{pattern}` and only empty guard arms; prefer `if let {pattern} = {scrutinee} {{ ... }}``
-> message（发散臂 + 空臂）：`match has a diverging arm `{pattern}` and an empty opposite arm; prefer `if let {pattern} = {scrutinee} {{ ... }}``
-> message（布尔分支）：`boolean match has a single business arm `{pattern}` and an empty opposite arm; prefer `if {condition} {{ ... }}``
-> 例：`match has a single business arm `Some(x)` and a diverging guard; prefer `let Some(x) = value else { ... }` over a match whose only other arms bail out`
+> Message (diverging guard): `match has a single business arm `{pattern}` and a diverging guard; prefer `let {pattern} = {scrutinee} else {{ ... }}` over a match whose only other arms bail out`
+> Message (empty guards): `match has a single business arm `{pattern}` and only empty guard arms; prefer `if let {pattern} = {scrutinee} {{ ... }}``
+> Message (diverging + empty arms): `match has a diverging arm `{pattern}` and an empty opposite arm; prefer `if let {pattern} = {scrutinee} {{ ... }}``
+> Message (boolean branches): `boolean match has a single business arm `{pattern}` and an empty opposite arm; prefer `if {condition} {{ ... }}``
+> Example: `match has a single business arm `Some(x)` and a diverging guard; prefer `let Some(x) = value else { ... }` over a match whose only other arms bail out`
 
-### 臂分类
+### Arm classification
 
-每个 match arm 归为四类之一：
+Each match arm belongs to one of four categories:
 
-| 分类 | 判定 |
+| Category | Condition |
 | --- | --- |
-| `guarded` | 无 pattern、pattern 带 `condition`（match guard）、或无 value |
-| `empty` | 空 `block`、或 `unit_expression`（`()`） |
-| `diverging` | 尾部表达式发散——`return_expression` / `break_expression` / `continue_expression`，或名字在 `diverging_macros` 里的宏调用。**只看尾部表达式**：块里前部有个 `if`/`for`/`loop`/`match` 里夹着 return 不算发散（`is_diverging_block`），因为前置分支可能不执行 |
-| `business` | 其他（做实际工作） |
+| `guarded` | Missing pattern, a pattern with a `condition` (match guard), or missing value |
+| `empty` | An empty `block` or `unit_expression` (`()`) |
+| `diverging` | The final expression diverges: `return_expression`, `break_expression`, `continue_expression`, or a macro listed in `diverging_macros`. **Only the final expression counts**: a return inside an earlier `if`/`for`/`loop`/`match` does not make the block diverge (`is_diverging_block`), since that branch may not execute. |
+| `business` | Anything else (actual work) |
 
-### 触发条件（全部满足）
+### Trigger conditions (all required)
 
-1. 臂数 ≥ 2，且没有 `guarded` 臂。
-2. match 满足以下任一形态：
-   - 恰好 1 个 `business` 臂，且至少 1 个 guard 臂；
-   - 恰好 2 个臂，且一个是 `empty`、另一个是 `diverging`。
-3. 对第一种形态，任一 guard 臂的体都没有引用其 pattern 引入的绑定（`guard_uses_pattern_binding`）。
-   `let ... else` 的 else 块无法命名匹配失败的值——比如 `Err(err) => return f(err)` 没有干净的 let-else 形式，跳过。
-   检测法：pattern 里小写开头的 `identifier` 视为绑定（`None`/`Err` 这类单元变体是大写，不算），
-   若体引用了其中任意一个，跳过。
-4. 要转换的臂 pattern 不是裸 `_`。
-5. 按 guard 分类决定改写方向：
-   - guard 全为 `empty`，且恰好是 `true` / `false` 两臂 → `if condition`；业务臂为 `false` 时取反。
-   - 其他 guard 全为 `empty` → `if-let`。
-   - guard 全为 `diverging` **且**所有 guard 体的文本完全相同 → `let-else`（能合并进同一个 else 块）。
-   - 恰好两个臂且混合 `empty` + `diverging` → 以发散臂为目标改成 `if-let`。
-   - 多于两个臂且混合 `empty` + `diverging` → 不触发。
-   - guard 发散方式不同（如一个 `return`、一个 `panic!`）→ 不触发。
+1. At least two arms, with no `guarded` arms.
+2. The match has one of these forms:
+   - Exactly one `business` arm and at least one guard arm.
+   - Exactly two arms, one `empty` and one `diverging`.
+3. For the first form, no guard body refers to bindings introduced by its pattern (`guard_uses_pattern_binding`).
+   A `let ... else` block cannot name the failed-match value: `Err(err) => return f(err)` has no clean let-else form and is skipped.
+   Detection treats lowercase-leading pattern `identifier` nodes as bindings (uppercase variants such as `None`/`Err` are not bindings).
+   If the body references any such binding, skip the match.
+4. The pattern of the arm to convert is not a bare `_`.
+5. Choose the rewrite based on guard classification:
+   - All guards are `empty`, with exactly `true` / `false` arms -> `if condition`; negate when the business arm is `false`.
+   - Other cases with all guards `empty` -> `if-let`.
+   - All guards are `diverging` **and** their body texts are identical -> `let-else` (merge into one else block).
+   - Exactly two arms mixing `empty` + `diverging` -> `if-let` targeting the diverging arm.
+   - More than two arms mixing `empty` + `diverging` -> no diagnostic.
+   - Different diverging bodies (such as `return` versus `panic!`) -> no diagnostic.
 
-### 违规（BAD）
+### Violations (BAD)
 
 ```rust
-// let-else 建议
+// Suggested let-else
 pub fn f(value: Option<u8>) {
     match value {
         Some(x) => foo(x),
-        None => return,            // 发散 guard
+        None => return,            // Diverging guard
     }
 }
 
-// if-let 建议
+// Suggested if-let
 pub fn f(value: Option<u8>) {
     match value {
         Some(x) => foo(x),
-        None => {},                // 空 guard
+        None => {},                // Empty guard
     }
 }
 
-// 单元表达式 guard 也按空算
+// A unit-expression guard also counts as empty.
 pub fn f(value: Option<u8>) {
     match value {
         Some(x) => foo(x),
@@ -136,7 +136,7 @@ pub fn f(value: Option<u8>) {
     }
 }
 
-// 尾部发散块（前有语句也算发散）
+// A block with a diverging tail, even with preceding statements
 pub fn f(value: Option<u8>) {
     match value {
         Some(x) => foo(x),
@@ -147,7 +147,7 @@ pub fn f(value: Option<u8>) {
     }
 }
 
-// 发散宏 guard（默认表含 panic/unreachable/todo/unimplemented）
+// Diverging macro guard (defaults include panic/unreachable/todo/unimplemented)
 pub fn f(value: Option<u8>) {
     match value {
         Some(x) => foo(x),
@@ -155,7 +155,7 @@ pub fn f(value: Option<u8>) {
     }
 }
 
-// 发散臂 + 空臂 → if-let
+// Diverging + empty arms -> if-let
 pub fn f(member_info: Option<MemberInfo>) {
     match member_info {
         Some(member_info) => {
@@ -165,7 +165,7 @@ pub fn f(member_info: Option<MemberInfo>) {
     }
 }
 
-// 多 guard 但体相同 → 可合并进一个 else
+// Multiple guards with identical bodies -> merge into one else block
 pub fn f(value: Option<u8>) {
     match value {
         Some(x) => foo(x),
@@ -174,7 +174,7 @@ pub fn f(value: Option<u8>) {
     }
 }
 
-// guard 只绑 `_` 不引用绑定 → 可改写
+// Guard only binds `_` and references no binding -> rewritable
 pub fn f(value: Result<u8, String>) -> u8 {
     match value {
         Ok(x) => x,
@@ -183,55 +183,55 @@ pub fn f(value: Result<u8, String>) -> u8 {
 }
 ```
 
-### 符合（GOOD）——不触发的场景
+### Compliant (GOOD) - Cases that do not trigger
 
 ```rust
-// 两个业务臂
+// Two business arms
 match value {
     Some(x) => foo(x),
     None => bar(),
 }
 
-// 多 pattern 分发
+// Dispatch over multiple patterns
 match value {
     Some(x) => a(x),
     Some(y) => b(y),
     None => return,
 }
 
-// 通配符业务兜底（业务臂是 _）
+// Wildcard business fallback (business pattern is _)
 match value {
     Some(x) => foo(x),
     _ => default(),
 }
 
-// match guard 无法用 if-let 表达
+// A match guard cannot be expressed with if-let.
 match value {
     Some(x) if x > 5 => foo(x),
     None => return,
 }
 
-// guard 体引用了自身 pattern 的绑定
+// The guard body references a binding from its own pattern.
 match value {
     Ok(x) => x,
     Err(err) => return err.len() as u8,
 }
 
-// 多于两个臂的混合空 + 发散 guard
+// More than two arms mixing empty and diverging guards
 match value {
     Some(x) => foo(x),
     None => {},
     _ => return,
 }
 
-// guard 发散方式不同
+// Guards diverge differently.
 match value {
     Some(x) => foo(x),
     None => return,
     _ => panic!("impossible"),
 }
 
-// guard 块的尾部不发散（前置 if 夹着 return 不算）
+// The guard block's tail does not diverge; a return inside an earlier if does not count.
 match value {
     Some(x) => foo(x),
     None => {
@@ -241,17 +241,17 @@ match value {
     },
 }
 
-// 单臂 match
+// Single-arm match
 match value {
     Some(x) => foo(x),
 }
 ```
 
-## 配置
+## Configuration
 
-| 键 | 说明 | 默认 |
+| Key | Description | Default |
 | --- | --- | --- |
-| `diverging_macros` | 视为发散宏的名字列表（不含 `::` 前缀，比较 `macro_name` 的最后一段） | `["panic", "unreachable", "todo", "unimplemented"]` |
-| `exclude_segments` | 路径任一成分命中即跳过整个文件 | `[]` |
-| `exclude_filename_prefixes` | 路径任一成分以某前缀开头即跳过 | `[]` |
-| `exclude_filenames` | 精确文件名匹配即跳过 | `[]` |
+| `diverging_macros` | Names treated as diverging macros, without `::` prefixes; compare the last `macro_name` segment | `["panic", "unreachable", "todo", "unimplemented"]` |
+| `exclude_segments` | Skip the file if any path segment matches | `[]` |
+| `exclude_filename_prefixes` | Skip if any path segment starts with a listed prefix | `[]` |
+| `exclude_filenames` | Skip exact filename matches | `[]` |

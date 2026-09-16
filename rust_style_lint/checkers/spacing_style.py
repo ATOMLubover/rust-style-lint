@@ -13,7 +13,7 @@ from pathlib import Path
 from tree_sitter import Language, Node, Parser
 import tree_sitter_rust
 
-from ..base import Violation, source_files
+from ..base import Violation, print_rule_guidance, source_files
 from ..config import merged
 from ..production_source import production_source
 
@@ -34,7 +34,7 @@ ENUM_VARIANT_CONTAINERS = {
     "enum_variant_list",
 }
 # Module-scope item containers: the file root and the declaration_list body of
-# an inline `mod`. impl/trait/extern method bodies are deliberately excluded —
+# an inline `mod`. impl/trait/extern method bodies are deliberately excluded -
 # item spacing is a module-scope rule.
 ITEM_CONTAINER_TYPES = {
     "source_file",
@@ -207,7 +207,7 @@ class RustSpacingChecker:
 
         # Macro bodies are opaque token trees to tree-sitter, so no
         # block/match_block nodes exist inside them. Re-parse each macro
-        # body fragment that is valid Rust (arm bodies, nested matches, …)
+        # body fragment that is valid Rust (arm bodies, nested matches, ...)
         # and apply the same rules, warning-only; fall back to a `=>`
         # match-like heuristic for custom fragments (select! arm lists).
         diagnostics.extend(
@@ -667,7 +667,7 @@ class RustSpacingChecker:
             )
         )
 
-        # Real nested containers (else blocks, inner match blocks, …) inside
+        # Real nested containers (else blocks, inner match blocks, ...) inside
         # the fragment get the same treatment as top-level ones.
         for node in sub_nodes:
             if node.type not in (
@@ -1676,6 +1676,8 @@ def main() -> int:
 
                 return 2
 
+        print_rule_guidance("spacing-style", diagnostics)
+
         for diagnostic in sorted(
             diagnostics,
             key=lambda item: (str(item.path), item.line, item.column, item.code),
@@ -1688,6 +1690,8 @@ def main() -> int:
         return 1 if diagnostics else 0
 
     remaining = fix(checker.root)
+
+    print_rule_guidance("spacing-style", remaining)
 
     for diagnostic in remaining:
         print(

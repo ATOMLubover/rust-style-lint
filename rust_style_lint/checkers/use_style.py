@@ -13,7 +13,7 @@ from pathlib import Path
 import tree_sitter
 import tree_sitter_rust
 
-from ..base import Violation, source_files
+from ..base import Violation, print_rule_guidance, source_files
 from ..config import merged
 from ..production_source import production_source
 
@@ -1535,6 +1535,8 @@ def main() -> int:
     for path in paths:
         errors, _ = check_file(path, root, local_crates, known_traits)
         diagnostics.extend(errors)
+
+    print_rule_guidance("use-style", diagnostics)
 
     for violation in diagnostics:
         print(f"{violation.path}:{violation.line}: {violation.code}: {violation.message}", file=sys.stderr)

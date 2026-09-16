@@ -1,13 +1,13 @@
 # no-inline-format
 
-> 禁止 format 字符串里的内联具名捕获 —— 所有参数必须位置化传参。
-> 代码：`FMT001` ｜ `--fix`：不支持（仅检测）
+> Forbid inline named captures in format strings; pass all arguments positionally.
+> Code: `FMT001` | `--fix`: unsupported (check only)
 
-## 目标
+## Goal
 
-`format!("hello, {name}")` 这类内联捕获（Rust 1.58 起可用）必须改写为位置参数
-`format!("hello, {}", name)`。格式字符串里的 `{identifier}`（identifier 以字母或
-下划线开头）都是违规，参数必须出现在参数列表里。
+Rewrite inline captures such as `format!("hello, {name}")` (available since Rust 1.58) as positional arguments:
+`format!("hello, {}", name)`. A format-string `{identifier}` whose identifier begins with a letter or
+underscore is a violation; pass the argument in the argument list.
 
 ```rust
 // BAD
@@ -21,22 +21,22 @@ println!("x={}, y={}", x, y)
 write!(f, "{:?}", value)
 ```
 
-## 触发条件（全部满足才报）
+## Trigger conditions (all required)
 
-1. AST 节点是 `macro_invocation`，宏名在 `macros` 列表里（见[配置](#配置)）。
-2. token tree 里 format 字符串**必须是该位置的字符串字面量**：
-   - `format!`、`format_args!`、`print!`、`println!`、`eprint!`、`eprintln!`、`panic!`
-     取**第一个**实参；
-   - `write!`、`writeln!` 取**第二个**实参（第一个是 writer）。
-   - 若该位置不是字面量（是变量、`concat!(...)` 调用等），无法静态判定 format
-     字符串，**跳过不报**。
-   - 更靠后的字符串字面量是数据参数，不是 format 字符串，不查。
-3. format 字符串里扫描到内联捕获 `{name}`（可带格式说明符，如 `{name:?}`、`{name:.2}`）。
+1. The AST node is a `macro_invocation` with a macro name in `macros` (see [configuration](#configuration)).
+2. The format string in the token tree **must be a string literal at the designated position**:
+   - `format!`, `format_args!`, `print!`, `println!`, `eprint!`, `eprintln!`, and `panic!`
+     use the **first** argument.
+   - `write!` and `writeln!` use the **second** argument; the first is the writer.
+   - If that argument is not a literal (for example, a variable or `concat!(...)`), the format string cannot be determined statically
+     and is **skipped without a diagnostic**.
+   - Later string literals are data arguments, not the format string, and are not checked.
+3. The format string contains an inline capture `{name}`, optionally with a format specifier such as `{name:?}` or `{name:.2}`.
 
-`{{`、`}}` 是转义花括号（字面量 `{`、`}`），**不是**捕获；`{}`、`{0}`（索引）以及
-只有格式说明符的 `{:?}`、`{:<10}` 都是合法的位置化用法，不报。
+`{{` and `}}` escape literal braces (`{` and `}`) and are **not** captures. `{}`, indexed `{0}`, and
+specifier-only placeholders such as `{:?}` and `{:<10}` are valid positional forms and are not reported.
 
-## 违规（BAD）
+## Violations (BAD)
 
 ```rust
 let name = "x";
@@ -44,32 +44,32 @@ format!("hello, {name}");                    // {name}
 println!("x={x}, y={y}", x = 1, y = 2);      // {x} {y}
 write!(f, "{value:?}", value);               // {value:?}
 panic!("err: {errno}", errno);               // {errno}
-format!(r#"raw {n}"#, n = 1);                // 原始字符串同样查
+format!(r#"raw {n}"#, n = 1);                // Raw strings are also checked.
 ```
 
-> message：`format string uses inline capture '{name}'; pass 'name' positionally to {实际宏名}!`
+> Message: `format string uses inline capture '{name}'; pass 'name' positionally to {actual_macro_name}!`
 >
-> 同一 format 字符串里每个不同的捕获名各报一次。
+> Each distinct capture name in a format string is reported once.
 
-## 符合（GOOD）
+## Compliant (GOOD)
 
 ```rust
 let name = "x";
-format!("hello, {}", name);                  // 位置参数
-println!("{0}/{1}", 1, 2);                   // 索引
-println!("spec: {:?} {:.2}", name, 3.14);    // 只有格式说明符
-println!("literal braces: {{name}}");        // 转义花括号是字面量
-let msg = "{name}";                          // 数据字符串，不是 format 字符串
-format!(msg, name);                          // format 字符串不是字面量，跳过
-format!("{}", msg);                          // "{name}" 是数据参数，不查
-write!(get_writer(), "{}", w);               // writer 不是字面量，format 字符串仍是第二个
+format!("hello, {}", name);                  // Positional argument
+println!("{0}/{1}", 1, 2);                   // Indexed arguments
+println!("spec: {:?} {:.2}", name, 3.14);    // Format specifiers only
+println!("literal braces: {{name}}");        // Escaped braces are literal.
+let msg = "{name}";                          // Data string, not a format string
+format!(msg, name);                          // Non-literal format string: skipped
+format!("{}", msg);                          // "{name}" is data and is not checked.
+write!(get_writer(), "{}", w);               // The writer is not a literal; the format string is still second.
 ```
 
-## 配置
+## Configuration
 
-`defaults.toml` 里的 `[no-inline-format].macros` 定义格式字符串位于第一参数的宏，
-`writer_macros` 定义 writer 位于第一参数、格式字符串位于第二参数的宏
-（`write!`/`writeln!` 取第二个实参，其余取第一个）：
+`[no-inline-format].macros` in `defaults.toml` lists macros whose format string is the first argument.
+`writer_macros` lists macros whose first argument is the writer and whose second is the format string
+(`write!`/`writeln!` use the second argument; the others use the first):
 
 ```toml
 [no-inline-format]
@@ -85,5 +85,5 @@ macros = [
 writer_macros = ["write", "writeln"]
 ```
 
-项目在 `rust-style-lint.toml` 里定义 `[no-inline-format]` 段会**整体替换**该表
-（与其它 checker 的替换语义一致）。默认段完整可用，通常无需配置。
+Defining `[no-inline-format]` in the project's `rust-style-lint.toml` **replaces the entire table**,
+consistent with other checkers. The defaults are complete and usually need no customization.
