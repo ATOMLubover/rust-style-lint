@@ -49,6 +49,7 @@ PARSER = tree_sitter.Parser(tree_sitter.Language(tree_sitter_rust.language()))
 # ---------------------------------------------------------------------------
 
 DECLARATION_KINDS: tuple[str, ...] = (
+    "associated_type",
     "const_item",
     "enum_item",
     "enum_variant",
@@ -585,6 +586,25 @@ def check_identifier_name(
 # tree walking - collect definition-site names with context
 # ---------------------------------------------------------------------------
 
+def is_trait_impl_member(node: tree_sitter.Node) -> bool:
+    """Return whether this declaration must use a trait-defined member name."""
+    if node.type not in ("function_item", "type_item", "const_item"):
+        return False
+
+    body = node.parent
+
+    if body is None or body.type != "declaration_list":
+        return False
+
+    implementation = body.parent
+
+    return (
+        implementation is not None
+        and implementation.type == "impl_item"
+        and implementation.child_by_field_name("trait") is not None
+    )
+
+
 def collect_definition_names(
     node: tree_sitter.Node,
     source: bytes,
@@ -602,7 +622,7 @@ def collect_definition_names(
             current_module += (text(source, name_node),)
 
     # --- declaration `name` field ---
-    if node.type in DECLARATION_KINDS:
+    if node.type in DECLARATION_KINDS and not is_trait_impl_member(node):
         name_node = node.child_by_field_name("name")
 
         if name_node is not None:
@@ -615,7 +635,7 @@ def collect_definition_names(
             elif node.type == "enum_variant":
                 ctx = CTX_ENUM_VARIANT
             elif node.type in (
-                "struct_item", "enum_item", "type_item",
+                "struct_item", "enum_item", "type_item", "associated_type",
                 "trait_item", "union_item",
             ):
                 ctx = CTX_TYPE

@@ -19,6 +19,46 @@ Each identifier definition has a context. Most rules exempt types (`type`) and f
 `function`, `let` (bindings), `parameter`, `const`, `static`, `enum_variant`,
 `type` (struct/enum/type/trait/union names), `field` (field declarations), and `macro_field` (structured macro field keys such as `tracing::warn!(error_variant = ?e)`).
 
+## Declaration ownership
+
+Check trait member names where the trait declares them. Trait methods use the
+`function` context, associated types (including `type Name;`) use `type`, and
+associated constants use `const`.
+
+In `impl Trait for Type`, skip only the names of direct methods, associated
+types, and associated constants: their spelling is prescribed by the trait.
+This applies equally to local and external traits, including imported aliases
+and generic paths. Local traits remain checked at their declarations, so their
+implementation names need not produce duplicate diagnostics. No dependency
+resolution or external-name allowlist is required.
+
+Continue checking parameters, local bindings, constant initializers, and nested
+declarations inside these implementations. Members of inherent `impl Type`
+blocks are still checked, including inherent implementations nested in methods.
+References to external paths, imported names, and type names are not definition
+sites and do not produce forbidden-name diagnostics.
+
+For a configuration forbidding `expression` in function, type, parameter, and
+binding contexts:
+
+```rust
+trait Local {
+    type Expression;                         // Reported at the declaration.
+    fn expression(&self);                    // Reported at the declaration.
+}
+
+impl external::Trait for Adapter {
+    type Expression = external::Expression; // Fixed member name: not reported.
+    fn expression(&self, expression: usize) { // Only the parameter is reported.
+        let expression = expression;         // Local binding is reported.
+    }
+}
+
+impl Adapter {
+    fn expression(&self) {}                  // Inherent method is reported.
+}
+```
+
 ## Global exclusions
 
 - Identifiers in inline `#[cfg(test)]` modules are skipped.
