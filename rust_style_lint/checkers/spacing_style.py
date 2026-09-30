@@ -1,5 +1,5 @@
 """Enforce custom Rust block-spacing rules: block-start
-separators and blank lines between statements, match arms, and variants."""
+separators and blank lines between statements and match arms."""
 
 from __future__ import annotations
 
@@ -111,6 +111,7 @@ class MappedNode:
     end_point: MappedPoint
     start_byte: int
     end_byte: int
+    struct_construction: bool = False
 
 
 @dataclass(frozen=True)
@@ -256,7 +257,15 @@ class RustSpacingChecker:
         units = direct_units(container)
 
         if not units:
-            return [], []
+            if not forbids_field_separator(container):
+                return [], []
+
+            closing = next(
+                (child for child in container.children if child.type == "}"), None,
+            )
+
+            if closing is None:
+                return [], []
 
         brace = opening_brace(container)
 
@@ -266,7 +275,7 @@ class RustSpacingChecker:
         diagnostics: list[Violation] = []
         edits: list[TextEdit] = []
 
-        first = unit_anchor(container, units[0])
+        first = unit_anchor(container, units[0]) if units else closing
 
         separator_rows = separator_rows_before_first(
             lines=lines,
@@ -289,13 +298,18 @@ class RustSpacingChecker:
         # }
         #
         # The separator exists because multi-line content is hard to scan:
-        # it is required for every multi-unit block AND for a single unit
-        # that itself spans several lines (e.g. a long `match` statement).
+        # it is required for multi-unit blocks and a single multiline unit
+        # (e.g. a long `match`), except for a lone struct construction.
         # A `{` alone on its line is exempt; a compact single-line unit is
         # exempt. In statement and match blocks, a real comment before the
         # first unit also separates visually.
-        first_unit_span_lines = units[0].start_point.row < units[0].end_point.row
-        needs_separator = len(units) >= 2 or first_unit_span_lines
+        first_unit_span_lines = (
+            bool(units) and units[0].start_point.row < units[0].end_point.row
+        )
+        single_constructor = len(units) == 1 and is_struct_construction(units[0])
+        needs_separator = (
+            len(units) >= 2 or first_unit_span_lines
+        ) and not single_constructor
         declaration_container = is_data_declaration_container(container)
 
         if (
@@ -380,8 +394,7 @@ class RustSpacingChecker:
                     )
                 )
 
-        # Remove separators from compact blocks: a single unit that fits on
-        # one line needs no bare `//` before it.
+        # A single-line unit or a lone struct construction needs no bare `//`.
         #
         # if condition {
         #     //
@@ -389,7 +402,7 @@ class RustSpacingChecker:
         # }
         if (
             len(units) == 1
-            and not first_unit_span_lines
+            and (not first_unit_span_lines or single_constructor)
             and container.type in BLOCK_CONTAINERS
             and separator_rows
         ):
@@ -417,10 +430,9 @@ class RustSpacingChecker:
                     )
                 )
 
-        # Direct statements, match arms, and enum variants must be
-        # separated by a blank line.
+        # Direct statements and match arms must be separated by a blank line.
         for previous, current in zip(units, units[1:]):
-            if container.type not in (BLOCK_CONTAINERS | ENUM_VARIANT_CONTAINERS):
+            if container.type not in BLOCK_CONTAINERS:
                 continue
 
             current_anchor = unit_anchor(container, current)
@@ -574,6 +586,7 @@ class RustSpacingChecker:
             end_point=self._point_for(line_starts, end_byte),
             start_byte=start_byte,
             end_byte=end_byte,
+            struct_construction=is_struct_construction(node),
         )
 
     @staticmethod
@@ -943,6 +956,26 @@ def match_like_arms(tt: Node) -> list[tuple[Node, Node]]:
     return arms
 
 
+def is_struct_construction(unit: Node | MappedNode) -> bool:
+    """Recognize a struct literal returned as the block's only expression."""
+    if isinstance(unit, MappedNode):
+        return unit.struct_construction
+
+    while unit.type in {
+        "expression_statement", "return_expression", "parenthesized_expression",
+    }:
+        children = [
+            child for child in unit.named_children if child.type not in COMMENT_NODE_TYPES
+        ]
+
+        if len(children) != 1:
+            return False
+
+        unit = children[0]
+
+    return unit.type == "struct_expression"
+
+
 def direct_units(container: Node) -> list[Node]:
     if container.type == "match_block":
         return [
@@ -967,7 +1000,9 @@ def direct_units(container: Node) -> list[Node]:
         return [
             child
             for child in container.named_children
-            if child.type == "field_initializer"
+            if child.type in {
+                "field_initializer", "shorthand_field_initializer", "base_field_initializer",
+            }
         ]
 
     if container.type == "enum_variant_list":

@@ -14,7 +14,9 @@ Scan all Rust source files under `src/` and report declarations without the requ
 
 Module-level items: modules, functions, structs, enums, traits, type aliases, constants, statics, macro definitions, and unions.
 Trait members: associated functions, type aliases, and constants (implicitly public).
-Enum variants: every variant (implicitly public).
+Enum variants: every variant and every field require their own outer doc comment,
+including members of private enums. Both named and tuple fields are checked.
+The enum's comment does not cover its variants, and a variant's comment does not cover its fields.
 Inherent methods: public functions in impl blocks.
 
 Node kinds: `associated_type`, `const_item`, `enum_item`, `enum_variant`, `field_declaration`,
@@ -33,10 +35,12 @@ Without attributes, it reports the declaration's starting line rather than the i
 ### Trigger conditions (all required)
 
 1. The file is under `src/` and is not excluded (see configuration).
-2. The node is one of the 14 kinds above.
+2. The node is one of the 14 kinds above, or an enum variant's tuple field.
 3. The item is not a test (`#[test]`, `#[tokio::test]`, or an attribute containing `rstest`).
 4. The item is not the `main` function in `src/main.rs`.
-5. The node has a `name` field.
+5. The node has a `name` field, or is a direct `type` child of an enum variant's
+   `ordered_field_declaration_list`. Tuple fields are identified as `Variant.0`,
+   `Variant.1`, etc., and reported as `enum variant field`.
 6. The required preceding comment is missing:
 
    - **Public items**: scan backward, skipping `attribute_item` nodes. The first non-attribute sibling must be a `line_comment` starting with `///`
@@ -47,7 +51,8 @@ Without attributes, it reports the declaration's starting line rather than the i
 
 ### Public versus private
 
-Public: any `visibility_modifier` (`pub`, `pub(crate)`, etc.); an `enum_variant`; a `field_declaration` whose enclosing struct/enum/union
+Public: any `visibility_modifier` (`pub`, `pub(crate)`, etc.); an `enum_variant` or any of its fields;
+a `field_declaration` whose enclosing struct/enum/union
 has a visibility modifier; or an item nested under a `trait_item` ancestor.
 Private: nested under a `closure_expression` or `function_item` ancestor (local items), without satisfying a public condition.
 
@@ -106,6 +111,11 @@ pub trait DocumentedTrait {
 pub enum DocumentedEnum {
     /// A documented variant.
     First,
+    /// Carries a value.
+    Value {
+        /// The payload value.
+        value: u32,
+    },
 }
 
 /// A documented type alias.
@@ -129,7 +139,22 @@ struct PrivateStruct;
 
 // A private module.
 mod private_mod;
+
+// An internal enum still documents every variant and field.
+enum PrivatePayload {
+    /// No payload.
+    Empty,
+    /// Carries a value.
+    Value {
+        /// The payload value.
+        value: u32,
+    },
+}
 ```
+
+Tuple fields also require separate doc comments when checking existing code.
+The `no-unnamed-fields` checker independently forbids tuple variants; documenting
+their fields does not make them comply with that rule.
 
 Attributes may appear between the doc comment and the item (`attribute_item` nodes are skipped):
 

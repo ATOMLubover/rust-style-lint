@@ -17,6 +17,66 @@ def violations_for(source: str) -> list:
 
 
 class DocCommentCoverageTest(unittest.TestCase):
+    def test_every_enum_variant_and_named_field_requires_its_own_doc_comment(self) -> None:
+        for prefix in ("/// Payload.\npub enum Payload", "// Payload.\nenum Payload"):
+            with self.subTest(prefix=prefix):
+                found = violations_for(
+                    prefix + " {\n"
+                    "    Empty,\n"
+                    "    /// Carries a value.\n"
+                    "    Value {\n"
+                    "        first: u32,\n"
+                    "        /// Second field.\n"
+                    "        second: String,\n"
+                    "    },\n"
+                    "}\n"
+                )
+                self.assertEqual([item.line for item in found], [3, 6])
+                self.assertTrue(all("missing a doc comment" in item.message for item in found))
+
+    def test_enum_tuple_fields_require_separate_doc_comments(self) -> None:
+        for prefix in ("/// Payload.\npub enum Payload", "// Payload.\nenum Payload"):
+            with self.subTest(prefix=prefix):
+                found = violations_for(
+                    prefix + " {\n"
+                    "    /// Carries values.\n"
+                    "    Value(\n"
+                    "        #[cfg(unix)]\n"
+                    "        (u32, u32),\n"
+                    "        /// Label.\n"
+                    "        String,\n"
+                    "        Vec<u8>,\n"
+                    "    ),\n"
+                    "}\n"
+                )
+                self.assertEqual([item.line for item in found], [5, 9])
+                self.assertEqual([item.message for item in found], [
+                    "public enum variant field 'Value.0' is missing a doc comment",
+                    "public enum variant field 'Value.2' is missing a doc comment",
+                ])
+
+    def test_enum_comments_do_not_cover_variants_or_fields(self) -> None:
+        found = violations_for(
+            "/// Payload.\npub enum Payload {\n"
+            "    Value { field: u32 },\n"
+            "    Empty,\n"
+            "}\n"
+        )
+        self.assertEqual([item.line for item in found], [3, 3, 4])
+
+    def test_regular_comments_do_not_cover_enum_members(self) -> None:
+        found = violations_for(
+            "// Payload.\nenum Payload {\n"
+            "    // Value.\n"
+            "    Value {\n"
+            "        // Field.\n"
+            "        field: u32,\n"
+            "    },\n"
+            "}\n"
+        )
+        self.assertEqual([item.line for item in found], [4, 6])
+        self.assertTrue(all("missing a doc comment" in item.message for item in found))
+
     def test_reports_first_attribute_for_public_and_private_items(self) -> None:
         for declaration in (
             "pub fn target() {}",

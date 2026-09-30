@@ -12,7 +12,8 @@ Covered declaration kinds
   type alias, const, static, macro definition, union.
 - Trait members:       associated functions, type aliases, and constants
   inside a trait definition (implicitly public).
-- Enum variants:       each variant of an enum (implicitly public).
+- Enum variants:       every variant and each named or tuple field require
+  outer doc comments, including members of private enums.
 - Inherent methods:    public functions inside an impl block.
 
 Skipped items
@@ -118,10 +119,23 @@ def is_public(declaration: tree_sitter.Node, source: bytes) -> bool:
     if declaration.type == "enum_variant":
         return True
 
+    parent = declaration.parent
+
+    if (
+        parent is not None
+        and parent.type == "ordered_field_declaration_list"
+        and parent.parent is not None
+        and parent.parent.type == "enum_variant"
+    ):
+        return True
+
     if declaration.type == "field_declaration":
         current = declaration.parent
 
         while current is not None:
+            if current.type == "enum_variant":
+                return True
+
             if current.type == "struct_item":
 
                 for child in current.children:
@@ -296,12 +310,45 @@ def comment_insertion_line(declaration: tree_sitter.Node) -> int:
     return first.start_point.row + 1
 
 
+def comment_declarations(
+    root: tree_sitter.Node, source: bytes,
+) -> list[tuple[tree_sitter.Node, str, str]]:
+    """Collect named declarations and individual enum tuple fields."""
+    declarations: list[tuple[tree_sitter.Node, str, str]] = []
+
+    for node in descendants(root, ITEM_KINDS + ("ordered_field_declaration_list",)):
+        if node.type == "ordered_field_declaration_list":
+            variant = node.parent
+
+            if variant is None or variant.type != "enum_variant":
+                continue
+
+            name = variant.child_by_field_name("name")
+
+            if name is None:
+                continue
+
+            for index, field in enumerate(node.children_by_field_name("type")):
+                declarations.append((
+                    field, f"{text(source, name)}.{index}", "enum variant field",
+                ))
+
+            continue
+
+        name = node.child_by_field_name("name")
+
+        if name is not None:
+            declarations.append((node, text(source, name), node.type.replace("_", " ")))
+
+    return declarations
+
+
 def check_file(path: Path, root: Path) -> list[Violation]:
     source = production_source(path, root)
     tree = PARSER.parse(source)
     violations: list[Violation] = []
 
-    for declaration in descendants(tree.root_node, ITEM_KINDS):
+    for declaration, name, kind in comment_declarations(tree.root_node, source):
         if is_test_item(declaration, source):
             continue
 
@@ -313,13 +360,6 @@ def check_file(path: Path, root: Path) -> list[Violation]:
         if has_comment(declaration, source, is_doc_comment=public):
             continue
 
-        name_node = declaration.child_by_field_name("name")
-
-        if name_node is None:
-            continue
-
-        name = text(source, name_node)
-
         visibility = "public" if public else "private"
         comment_kind = "doc comment" if public else "regular comment"
         violations.append(
@@ -328,7 +368,7 @@ def check_file(path: Path, root: Path) -> list[Violation]:
                 line=comment_insertion_line(declaration),
                 code="DOC001",
                 message=(
-                    f"{visibility} {declaration.type.replace('_', ' ')} "
+                    f"{visibility} {kind} "
                     f"'{name}' is missing a {comment_kind}"
                 ),
             ),

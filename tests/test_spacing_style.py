@@ -78,7 +78,7 @@ class RustSpacingCheckerTest(unittest.TestCase):
 """,
         )
 
-    def test_enum_variants_require_a_blank_line(self) -> None:
+    def test_enum_variants_allow_optional_blank_lines(self) -> None:
         source = """enum Payload {
     /// First payload.
     First,
@@ -86,24 +86,12 @@ class RustSpacingCheckerTest(unittest.TestCase):
     Second,
 }
 """
-        analysis = self.analyze(source, build_fixes=True)
-        fixed = apply_edits(source.encode(), analysis.edits)
-
-        self.assertEqual(
-            [diagnostic.code for diagnostic in analysis.diagnostics],
-            ["BLK001"],
-        )
-        self.assertEqual(
-            fixed.decode(),
-            """enum Payload {
-    /// First payload.
-    First,
-
-    /// Second payload.
-    Second,
-}
-""",
-        )
+        for gap in ("", "\n", "\n\n"):
+            with self.subTest(gap=gap):
+                fixture = source.replace("    /// Second", gap + "    /// Second")
+                analysis = self.analyze(fixture, build_fixes=True)
+                self.assertEqual(analysis.diagnostics, ())
+                self.assertEqual(analysis.edits, ())
 
     def test_declaration_separator_is_forbidden_and_removed(self) -> None:
         for declaration, members in (
@@ -239,6 +227,44 @@ struct Item {
 }
 """,
         )
+
+    def test_struct_constructor_separators_are_removed(self) -> None:
+        for fields in (
+            "            nucl,\n            repo,\n            obj_dept,\n",
+            "            nucl: nucl,\n            repo: repo,\n",
+            "            nucl,\n            repo: repo,\n            ..base\n",
+            "            ..base\n",
+            "",
+        ):
+            for expression in ("Self", "return Self"):
+                with self.subTest(fields=fields, expression=expression):
+                    source = (
+                        "impl Scheduler {\n"
+                        "    /// Constructs the scheduler without starting workers.\n"
+                        "    pub const fn new(nucl: N, repo: R, obj_dept: O) -> Self {\n"
+                        "        //\n"
+                        f"        {expression} {{\n"
+                        "            //\n"
+                        f"{fields}"
+                        "        }\n"
+                        "    }\n"
+                        "}\n"
+                    )
+                    if expression.startswith("return"):
+                        source = source.replace("        }\n", "        };\n")
+                    analysis = self.analyze(source, build_fixes=True)
+                    self.assertEqual(
+                        [item.code for item in analysis.diagnostics],
+                        ["BLK002", "BLK002"],
+                    )
+                    clean = "\n".join(
+                        line for line in source.split("\n") if line.strip() != "//"
+                    )
+                    fixed = apply_edits(source.encode(), analysis.edits).decode()
+                    self.assertEqual(fixed, clean)
+                    clean_analysis = self.analyze(clean, build_fixes=True)
+                    self.assertEqual(clean_analysis.diagnostics, ())
+                    self.assertEqual(clean_analysis.edits, ())
 
     def test_macro_select_branches_need_separator_and_blank_line(self) -> None:
         analysis = self.analyze(
@@ -415,7 +441,7 @@ fn f() {
 
         self.assertEqual(
             [diagnostic.code for diagnostic in analysis.diagnostics],
-            ["BLK002", "BLK001"],
+            ["BLK002"],
         )
         self.assertEqual(
             fixed.decode(),
@@ -424,7 +450,6 @@ fn f() {
         first: String,
         second: String,
     },
-
     Second,
 }
 """,

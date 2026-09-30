@@ -1,6 +1,6 @@
 # spacing-style
 
-> Custom Rust block spacing: leading separators and blank lines between statements, match arms, enum variants, and module items.
+> Custom Rust block spacing: leading separators and blank lines between statements, match arms, and module items.
 > Codes: `BLK000`-`BLK003`, `PARSE001` | `--fix`: supported for BLK000/BLK001/BLK002/BLK003
 
 ## Goal
@@ -8,7 +8,7 @@
 Enforce consistent layout:
 
 1. Blocks containing multiple statements or match arms require a bare `//` separator after the opening `{`.
-2. Adjacent statements, match arms, and enum variants require a blank line between them.
+2. Adjacent statements and match arms require a blank line between them. Enum variants allow optional blank lines.
 3. Bare `//` is forbidden at the start of struct/enum declarations, struct literals, and field lists; it is redundant in compact single-unit blocks.
 4. Module-scope items (struct/impl/trait/fn/mod/use/const/static/type/etc.) require blank lines between them.
 
@@ -46,6 +46,8 @@ if condition {
 ```
 
 A single multiline unit also requires a separator, such as a multiline `match` expression inside a block.
+A block containing only a struct construction is exempt, including `Self { ... }`
+and `return Self { ... };`.
 
 ### Compliant (GOOD)
 
@@ -72,6 +74,7 @@ if condition {
 
 - `{` on its own line (`if condition\n{`) needs no separator.
 - A compact block containing a single single-line statement needs no separator.
+- A block containing only a struct construction needs no separator, regardless of its line count.
 - All enum/struct declarations forbid leading separators.
 - Struct literals and field lists inside unions or enum struct variants do not require separators.
 
@@ -83,11 +86,11 @@ Insert a `//` line. Two forms: (a) when the first unit is on a later line, inser
 ## BLK001 - Missing blank line between units
 
 > Message: `missing blank line before this {kind}; previous {kind} ended at line {line_number}`
-> `kind`: `statement`, `match arm`, or `enum variant`.
+> `kind`: `statement` or `match arm`.
 
 ### Trigger conditions
 
-Two consecutive direct units in a `block`, `match_block`, or `enum_variant_list`:
+Two consecutive direct units in a `block` or `match_block`:
 
 - Are on different lines (`previous.end_point.row != current.start_point.row`); and
 - Have no entirely blank line between the previous unit's end and the current unit's start.
@@ -95,23 +98,21 @@ Two consecutive direct units in a `block`, `match_block`, or `enum_variant_list`
 ### Violations (BAD)
 
 ```rust
-enum Payload {
-    /// First payload.
-    First,
-    /// Second payload.
-    Second,
+fn example() {
+    //
+    first();
+    second();
 }
 ```
 
 ### Compliant (GOOD)
 
 ```rust
-enum Payload {
-    /// First payload.
-    First,
+fn example() {
+    //
+    first();
 
-    /// Second payload.
-    Second,
+    second();
 }
 ```
 
@@ -132,7 +133,7 @@ fn example() {
 ### Exemptions
 
 - Same-line statements separated by `;` are not checked.
-- Struct fields are not checked for blank lines.
+- Struct fields and enum variants are not checked for blank lines; fixing preserves their spacing.
 
 ### --fix
 
@@ -148,6 +149,8 @@ A struct/enum declaration, a struct literal's `field_initializer_list`, or a uni
 `field_declaration_list` has a bare `//` between `{` and its first member. This is forbidden regardless of the member count, multiline members,
 or whether `{` occupies its own line. For declarations, the message is
 `bare // separator is forbidden at the start of this struct or enum declaration`.
+Struct literals include named fields (`field: value`), shorthand fields (`field`),
+update syntax (`..base`), and empty field lists.
 
 ```rust
 // BAD
@@ -170,7 +173,8 @@ This variant does not flag bare `//` in the enclosing function block (`block`); 
 
 > Message: `bare // block-start separator is redundant in a single-statement block`
 
-A `block` / `match_block` contains exactly one single-line unit and has a bare `//` between `{` and that unit.
+A `block` / `match_block` contains exactly one single-line unit, or only a struct
+construction, and has a bare `//` between `{` and that unit.
 
 ```rust
 // BAD
@@ -182,6 +186,19 @@ if condition {
 // GOOD
 if condition {
     return;
+}
+```
+
+Constructor blocks need no separator outside or inside the struct literal:
+
+```rust
+/// Constructs the scheduler without starting workers.
+pub const fn new(nucl: N, repo: R, obj_dept: O) -> Self {
+    Self {
+        nucl,
+        repo,
+        obj_dept,
+    }
 }
 ```
 
